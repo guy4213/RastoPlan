@@ -17,12 +17,12 @@ export const DEFAULT_ACCESSORY_RULES: AccessoryRules = {
 // Reasonable default panel catalog. Exact widths and stock are finalized
 // per project — see spec section 4.
 const DEFAULT_PANELS: Panel[] = [
-  { type: "R75", width: 75, height: 300, isLeading: true, inStock: true },
-  { type: "C30x30", width: 30, height: 300, isLeading: true, inStock: true },
-  { type: "R60", width: 60, height: 300, isLeading: false, inStock: true },
-  { type: "R55", width: 55, height: 300, isLeading: false, inStock: true },
-  { type: "R50", width: 50, height: 300, isLeading: false, inStock: true },
-  { type: "R40", width: 40, height: 300, isLeading: false, inStock: true },
+  { type: "R75", width: 75, height: 300, isLeading: true, inStock: true, kind: "straight" },
+  { type: "C30x30", width: 30, height: 300, isLeading: true, inStock: true, kind: "corner" },
+  { type: "R60", width: 60, height: 300, isLeading: false, inStock: true, kind: "straight" },
+  { type: "R55", width: 55, height: 300, isLeading: false, inStock: true, kind: "straight" },
+  { type: "R50", width: 50, height: 300, isLeading: false, inStock: true, kind: "straight" },
+  { type: "R40", width: 40, height: 300, isLeading: false, inStock: true, kind: "straight" },
 ];
 
 export const DEFAULT_PANEL_CATALOG: PanelCatalog = {

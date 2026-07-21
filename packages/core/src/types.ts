@@ -124,6 +124,8 @@ export interface Panel {
   isLeading: boolean;
   /** false = not allowed for auto-tiling (manual exception only) */
   inStock: boolean;
+  /** 'straight' fills a plain wall run; 'corner' (e.g. C30x30) is placed at corners only — never selected for straight-run tiling (added in Milestone 2, tiling layer) */
+  kind: "straight" | "corner";
 }
 
 export interface PanelCatalog {
