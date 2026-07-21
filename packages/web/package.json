@@ -1,0 +1,28 @@
+{
+  "name": "@rastoplan/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "RASTO Formwork Layout Engine — web app (React + Vite + Konva)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"no tests yet in @rastoplan/web\""
+  },
+  "dependencies": {
+    "@rastoplan/core": "workspace:*",
+    "konva": "^9.3.16",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-konva": "^18.2.10"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}
