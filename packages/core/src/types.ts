@@ -54,11 +54,21 @@ export interface Wall {
 /** Node kind, determined by how many edges meet there. */
 export type NodeType = "L" | "T" | "cross" | "end";
 
+/**
+ * Concave ('inner', e.g. the notch of an L-shaped room) vs convex ('outer',
+ * e.g. a regular box corner) relative to the wall loop's interior. Only
+ * meaningful for 'L' nodes that sit on a fully closed loop of 'L' nodes —
+ * left undefined otherwise (added in Milestone 2, geometry layer).
+ */
+export type CornerSide = "inner" | "outer";
+
 /** A vertex in the wall graph (derived from wall endpoints/intersections). */
 export interface Node {
   id: string;
   point: Point;
   type: NodeType;
+  /** set by the geometry layer for classifiable 'L' nodes; see CornerSide. */
+  cornerSide?: CornerSide;
 }
 
 /** A segment between two graph nodes, belonging to one wall. */
@@ -71,6 +81,8 @@ export interface Edge {
   nodeB: string;
   /** length in cm after subtracting corner regions */
   clearLength: number;
+  /** deferred-processing tags, e.g. "unresolved-T", "unresolved-cross" (added in Milestone 2, geometry layer) */
+  flags: string[];
 }
 
 // ── Layout result ──
