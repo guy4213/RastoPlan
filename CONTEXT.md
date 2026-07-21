@@ -78,15 +78,22 @@ the field crew wrong numbers and it's a physical, on-site problem.
 
 ## Storage layer
 
-`StorageProvider` interface (`core/src/storage/`): `list`, `load`, `save`,
-`duplicate`, `remove`. Two implementations:
+`StorageProvider` interface (`core/src/storage/StorageProvider.ts`): `list`,
+`load`, `save`, `duplicate`, `remove` — all async, since both real backends
+are inherently asynchronous.
+
+The interface lives in `core` because it's a pure contract, but the two
+concrete implementations are **not** in `core` — they inherently have side
+effects (browser storage / network), which would violate core purity.
+Both live in `packages/web/src/storage/`:
 - `IndexedDBProvider` — used during early core development and as an
   offline fallback. Currently a stub (throws "not implemented").
 - `ApiProvider` — talks to `/api/projects`. Lands in Milestone 3. Currently
   a stub.
 
 Provider selection is config/env driven (`VITE_STORAGE_PROVIDER` — see
-`.env.example`), so swapping implementations is a one-line change.
+`.env.example`), so swapping implementations is a one-line change
+(`packages/web/src/storage/index.ts`).
 
 Save model (spec 12.2, for when it's implemented): whole `Project` as one
 atomic JSONB blob, no normalized walls/placements tables. Auto-save
