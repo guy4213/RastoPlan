@@ -81,6 +81,27 @@ function withUpdatedAt(project: Project): Project {
   return { ...project, updatedAt: nowIso() };
 }
 
+/**
+ * The outer-face mate of a placement — the one produced by
+ * syncOuterPlacements when the layout was computed. Match on same edge,
+ * same type/width/offset, opposite side, and matching kind, excluding
+ * outer-only protrusion markers (they have no inner twin by design).
+ */
+function findSyncTwin(target: Placement, all: Placement[]): Placement | undefined {
+  if (target.flags.includes("outer-corner-protrusion")) return undefined;
+  return all.find(
+    (p) =>
+      p.id !== target.id &&
+      p.edgeId === target.edgeId &&
+      p.side !== target.side &&
+      p.kind === target.kind &&
+      p.panelType === target.panelType &&
+      p.width === target.width &&
+      p.offsetAlongEdge === target.offsetAlongEdge &&
+      !p.flags.includes("outer-corner-protrusion")
+  );
+}
+
 export function reduce(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "load-project":
@@ -201,25 +222,49 @@ export function reduce(state: AppState, action: Action): AppState {
       };
     }
 
-    case "update-placement":
+    case "update-placement": {
+      const target = state.project.placements.find((p) => p.id === action.placementId);
+      if (!target) return state;
+      const twin = findSyncTwin(target, state.project.placements);
+      const patch = { ...action.patch, source: "manual" as const };
+      // The twin inherits every geometric/type change (offset, width,
+      // panelType, kind) but keeps its own side — that's exactly what
+      // preserves Dywidag alignment across the wall.
+      const twinPatch: Partial<Placement> = { source: "manual" };
+      if (action.patch.offsetAlongEdge !== undefined) twinPatch.offsetAlongEdge = action.patch.offsetAlongEdge;
+      if (action.patch.width !== undefined) twinPatch.width = action.patch.width;
+      if (action.patch.panelType !== undefined) twinPatch.panelType = action.patch.panelType;
+      if (action.patch.kind !== undefined) twinPatch.kind = action.patch.kind;
+
       return {
         ...state,
         project: withUpdatedAt({
           ...state.project,
-          placements: state.project.placements.map((p) =>
-            p.id === action.placementId ? { ...p, ...action.patch, source: "manual" } : p
-          ),
+          placements: state.project.placements.map((p) => {
+            if (p.id === target.id) return { ...p, ...patch };
+            if (twin && p.id === twin.id) return { ...p, ...twinPatch };
+            return p;
+          }),
         }),
       };
-    case "delete-placement":
+    }
+    case "delete-placement": {
+      const target = state.project.placements.find((p) => p.id === action.placementId);
+      if (!target) return state;
+      const twin = findSyncTwin(target, state.project.placements);
+      const idsToRemove = new Set<string>([target.id]);
+      // Sync preservation: dropping only one side would leave the other
+      // face with an orphan seam that can't be tied through — delete both.
+      if (twin) idsToRemove.add(twin.id);
       return {
         ...state,
         project: withUpdatedAt({
           ...state.project,
-          placements: state.project.placements.filter((p) => p.id !== action.placementId),
+          placements: state.project.placements.filter((p) => !idsToRemove.has(p.id)),
         }),
         ui: { ...state.ui, selectedPlacementId: null },
       };
+    }
     case "insert-placement":
       return {
         ...state,
