@@ -1,7 +1,7 @@
 import type { Pour, Project, Wall, Placement, Point } from "@rastoplan/core";
 import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG, tileProject } from "@rastoplan/core";
 
-export type Tool = "select" | "draw-wall";
+export type Tool = "select" | "draw-wall" | "weld";
 
 export interface UiState {
   tool: Tool;
@@ -81,6 +81,7 @@ export type Action =
   | { type: "update-wall"; wallId: string; patch: Partial<Wall> }
   | { type: "delete-wall"; wallId: string }
   | { type: "delete-walls"; wallIds: string[] }
+  | { type: "weld-endpoints"; refs: { wallId: string; end: 0 | 1 }[]; at: Point }
   | { type: "compute" }
   | { type: "update-placement"; placementId: string; patch: Partial<Placement> }
   | { type: "delete-placement"; placementId: string }
@@ -258,6 +259,31 @@ export function reduce(state: AppState, action: Action): AppState {
           placements: [],
         }),
         ui: { ...state.ui, layoutDirty: true, selectedWallId: null, selectedWallIds: [] },
+      };
+    }
+    case "weld-endpoints": {
+      // Move every listed endpoint to the same exact coordinate — the
+      // result is guaranteed to be a shared vertex (not "close enough")
+      // so downstream corner detection can't miss it.
+      const at = { x: Math.round(action.at.x), y: Math.round(action.at.y) };
+      const byWall = new Map<string, (0 | 1)[]>();
+      for (const r of action.refs) {
+        const list = byWall.get(r.wallId) ?? [];
+        list.push(r.end);
+        byWall.set(r.wallId, list);
+      }
+      const walls = state.project.walls.map((w) => {
+        const ends = byWall.get(w.id);
+        if (!ends) return w;
+        const line: [Point, Point] = [w.innerLine[0], w.innerLine[1]];
+        if (ends.includes(0)) line[0] = at;
+        if (ends.includes(1)) line[1] = at;
+        return { ...w, innerLine: line };
+      });
+      return {
+        ...state,
+        project: withUpdatedAt({ ...state.project, walls, placements: [] }),
+        ui: { ...state.ui, layoutDirty: true },
       };
     }
 

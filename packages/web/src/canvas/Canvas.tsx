@@ -6,6 +6,7 @@ import { useProject } from "../state/ProjectContext.js";
 import { Grid } from "./Grid.js";
 import { Walls } from "./Walls.js";
 import { Placements } from "./Placements.js";
+import { WeldOverlay } from "./WeldOverlay.js";
 import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, snapEndpoint } from "./geometry.js";
 
 const MIN_SCALE = 0.05;
@@ -325,7 +326,8 @@ export function Canvas() {
     if (tool !== "draw-wall") cancelDraw();
   }, [tool, cancelDraw]);
 
-  const cursor = tool === "draw-wall" ? "crosshair" : "default";
+  const cursor =
+    tool === "draw-wall" ? "crosshair" : tool === "weld" ? "cell" : "default";
 
   return (
     <div ref={containerRef} style={{ flex: 1, background: "#f8fafc", position: "relative", cursor }}>
@@ -438,6 +440,7 @@ export function Canvas() {
               listening={false}
             />
           )}
+          {tool === "weld" && <WeldOverlay walls={walls} scale={view.scale} />}
         </Layer>
       </Stage>
       <div
