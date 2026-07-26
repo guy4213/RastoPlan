@@ -288,14 +288,40 @@ export function Canvas() {
     [tool, drawStart, drawMode, cancelDraw, marquee]
   );
 
-  // Keyboard: Delete selection; Escape cancels an in-progress draw or menu.
+  // Keyboard: tool switch (V/D/W), Delete selection, Escape cancels.
+  // Skip when the user is typing into a form field so the shortcuts
+  // don't hijack, e.g., the project-name input.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isEditable =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable);
+      if (isEditable) return;
+
       if (e.key === "Escape") {
         if (contextMenu) setContextMenu(null);
         if (marquee) setMarquee(null);
         if (drawStart || drawMode !== "idle") cancelDraw();
         return;
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === "v") {
+          dispatch({ type: "set-tool", tool: "select" });
+          return;
+        }
+        if (k === "d") {
+          dispatch({ type: "set-tool", tool: "draw-wall" });
+          return;
+        }
+        if (k === "w") {
+          dispatch({ type: "set-tool", tool: "weld" });
+          return;
+        }
       }
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       if (selectedWallIds.length > 1) {
