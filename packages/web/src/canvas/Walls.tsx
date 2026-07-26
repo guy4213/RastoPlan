@@ -8,23 +8,27 @@ interface Props {
   walls: Wall[];
   pours: Pour[];
   selectedWallId: string | null;
+  selectedWallIds: string[];
   scale: number;
   onSelect: (wallId: string | null) => void;
+  onContextMenu?: (wallId: string, screenX: number, screenY: number) => void;
 }
 
 function pourColor(pours: Pour[], pourId: string): string {
   return pours.find((p) => p.id === pourId)?.color ?? "#475569";
 }
 
-export function Walls({ walls, pours, selectedWallId, scale, onSelect }: Props) {
+export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, onSelect, onContextMenu }: Props) {
   const { state, dispatch } = useProject();
   const draggable = state.ui.tool === "select";
+  const selectedSet = new Set(selectedWallIds);
 
   return (
     <>
       {walls.map((wall) => {
         const color = pourColor(pours, wall.pourId);
-        const selected = wall.id === selectedWallId;
+        const isPrimary = wall.id === selectedWallId;
+        const selected = selectedSet.has(wall.id) || isPrimary;
         const [a, b]: [Point, Point] = wall.innerLine;
         const n = wallNormal(wall);
         const outerA = { x: a.x + n.x * wall.thickness, y: a.y + n.y * wall.thickness };
@@ -72,6 +76,14 @@ export function Walls({ walls, pours, selectedWallId, scale, onSelect }: Props) 
                 e.cancelBubble = true;
                 commitWholeWallMove(e.target);
               }}
+              onContextMenu={(e) => {
+                e.evt.preventDefault();
+                e.cancelBubble = true;
+                onSelect(wall.id);
+                if (!onContextMenu) return;
+                const pos = e.target.getStage()?.getPointerPosition();
+                if (pos) onContextMenu(wall.id, pos.x, pos.y);
+              }}
             >
               <Line
                 points={[a.x, a.y, b.x, b.y]}
@@ -90,7 +102,7 @@ export function Walls({ walls, pours, selectedWallId, scale, onSelect }: Props) 
               />
             </Group>
 
-            {selected && draggable && (
+            {isPrimary && draggable && (
               <>
                 <EndpointHandle
                   point={a}

@@ -41,6 +41,17 @@ export function Toolbar() {
         </ToolButton>
       </div>
 
+      {tool === "draw-wall" && (
+        <span style={{ fontSize: 11, color: "#64748b" }}>
+          גרירה או קליק-קליק · Shift = אורתוגונלי · Escape / קליק ימני = ביטול
+        </span>
+      )}
+      {tool === "select" && (
+        <span style={{ fontSize: 11, color: "#64748b" }}>
+          קליק = בחירה · Shift+גרירה = חלון בחירה · גרירה = הזזה · Delete = מחיקה
+        </span>
+      )}
+
       <div style={{ marginInlineStart: "auto", display: "flex", alignItems: "center", gap: 8 }}>
         {layoutDirty && state.project.walls.length > 0 && (
           <span style={{ fontSize: 12, color: "#b45309" }}>הפריסה אינה מעודכנת</span>

@@ -11,6 +11,7 @@ interface Props {
   selectedPlacementId: string | null;
   scale: number;
   onSelect: (placementId: string | null) => void;
+  onContextMenu?: (placementId: string, screenX: number, screenY: number) => void;
 }
 
 interface Colors {
@@ -60,7 +61,7 @@ function snapToTargets(offset: number, targets: number[], snapCm: number): numbe
   return best;
 }
 
-export function Placements({ walls, placements, selectedPlacementId, scale, onSelect }: Props) {
+export function Placements({ walls, placements, selectedPlacementId, scale, onSelect, onContextMenu }: Props) {
   const { dispatch } = useProject();
   const wallById = useMemo(() => new Map(walls.map((w) => [w.id, w])), [walls]);
   const depth = 8; // cm of visual thickness for the band
@@ -167,6 +168,14 @@ export function Placements({ walls, placements, selectedPlacementId, scale, onSe
             onTap={(e) => {
               e.cancelBubble = true;
               onSelect(placement.id);
+            }}
+            onContextMenu={(e) => {
+              e.evt.preventDefault();
+              e.cancelBubble = true;
+              onSelect(placement.id);
+              if (!onContextMenu) return;
+              const pos = e.target.getStage()?.getPointerPosition();
+              if (pos) onContextMenu(placement.id, pos.x, pos.y);
             }}
           >
             <Line

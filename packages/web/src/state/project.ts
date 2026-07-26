@@ -7,6 +7,12 @@ export interface UiState {
   tool: Tool;
   activePourId: string | null;
   selectedWallId: string | null;
+  /**
+   * Full marquee/multi selection. selectedWallId is the "primary" (the one
+   * whose props show in the WallPanel) and is always the first entry here
+   * when non-null.
+   */
+  selectedWallIds: string[];
   selectedPlacementId: string | null;
   /** Canvas view transform: scale (px per cm) and pan offset (in px). */
   view: { scale: number; offset: Point };
@@ -51,6 +57,7 @@ export function initialAppState(project: Project): AppState {
       tool: "select",
       activePourId: project.pours[0]?.id ?? null,
       selectedWallId: null,
+      selectedWallIds: [],
       selectedPlacementId: null,
       view: { scale: 0.5, offset: { x: 100, y: 100 } },
       layoutDirty: false,
@@ -64,6 +71,7 @@ export type Action =
   | { type: "set-tool"; tool: Tool }
   | { type: "set-active-pour"; pourId: string | null }
   | { type: "select-wall"; wallId: string | null }
+  | { type: "set-selected-walls"; wallIds: string[] }
   | { type: "select-placement"; placementId: string | null }
   | { type: "set-view"; view: UiState["view"] }
   | { type: "add-pour" }
@@ -72,6 +80,7 @@ export type Action =
   | { type: "add-wall"; a: Point; b: Point }
   | { type: "update-wall"; wallId: string; patch: Partial<Wall> }
   | { type: "delete-wall"; wallId: string }
+  | { type: "delete-walls"; wallIds: string[] }
   | { type: "compute" }
   | { type: "update-placement"; placementId: string; patch: Partial<Placement> }
   | { type: "delete-placement"; placementId: string }
@@ -111,6 +120,7 @@ export function reduce(state: AppState, action: Action): AppState {
           ...state.ui,
           activePourId: action.project.pours[0]?.id ?? null,
           selectedWallId: null,
+          selectedWallIds: [],
           selectedPlacementId: null,
           layoutDirty: action.project.placements.length === 0 && action.project.walls.length > 0,
         },
@@ -124,9 +134,35 @@ export function reduce(state: AppState, action: Action): AppState {
     case "set-active-pour":
       return { ...state, ui: { ...state.ui, activePourId: action.pourId } };
     case "select-wall":
-      return { ...state, ui: { ...state.ui, selectedWallId: action.wallId, selectedPlacementId: null } };
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          selectedWallId: action.wallId,
+          selectedWallIds: action.wallId ? [action.wallId] : [],
+          selectedPlacementId: null,
+        },
+      };
+    case "set-selected-walls":
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          selectedWallIds: action.wallIds,
+          selectedWallId: action.wallIds[0] ?? null,
+          selectedPlacementId: null,
+        },
+      };
     case "select-placement":
-      return { ...state, ui: { ...state.ui, selectedPlacementId: action.placementId, selectedWallId: null } };
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          selectedPlacementId: action.placementId,
+          selectedWallId: null,
+          selectedWallIds: [],
+        },
+      };
     case "set-view":
       return { ...state, ui: { ...state.ui, view: action.view } };
 
@@ -186,7 +222,7 @@ export function reduce(state: AppState, action: Action): AppState {
       return {
         ...state,
         project: withUpdatedAt({ ...state.project, walls: [...state.project.walls, wall], placements: [] }),
-        ui: { ...state.ui, layoutDirty: true, selectedWallId: wall.id },
+        ui: { ...state.ui, layoutDirty: true, selectedWallId: wall.id, selectedWallIds: [wall.id] },
       };
     }
     case "update-wall": {
@@ -210,8 +246,20 @@ export function reduce(state: AppState, action: Action): AppState {
           walls: state.project.walls.filter((w) => w.id !== action.wallId),
           placements: [],
         }),
-        ui: { ...state.ui, layoutDirty: true, selectedWallId: null },
+        ui: { ...state.ui, layoutDirty: true, selectedWallId: null, selectedWallIds: [] },
       };
+    case "delete-walls": {
+      const remove = new Set(action.wallIds);
+      return {
+        ...state,
+        project: withUpdatedAt({
+          ...state.project,
+          walls: state.project.walls.filter((w) => !remove.has(w.id)),
+          placements: [],
+        }),
+        ui: { ...state.ui, layoutDirty: true, selectedWallId: null, selectedWallIds: [] },
+      };
+    }
 
     case "compute": {
       const placements = tileProject(state.project);

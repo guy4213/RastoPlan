@@ -3,8 +3,7 @@ import { useProject } from "../state/ProjectContext.js";
 export function PoursPanel() {
   const { state, dispatch } = useProject();
   const { pours } = state.project;
-  const { activePourId, selectedWallId } = state.ui;
-  const selectedWall = state.project.walls.find((w) => w.id === selectedWallId) ?? null;
+  const { activePourId } = state.ui;
 
   return (
     <section style={sectionStyle}>
@@ -15,7 +14,7 @@ export function PoursPanel() {
         </button>
       </header>
       <p style={hintStyle}>
-        בחר יציקה פעילה — קירות חדשים שתצייר ישויכו אליה. שנה שיוך של קיר קיים מפאנל הבחירה למטה.
+        בחר יציקה פעילה — קירות חדשים שתצייר ישויכו אליה. שנה שיוך של קיר קיים בפאנל "קיר נבחר".
       </p>
       <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
         {pours.map((pour) => {
@@ -98,55 +97,6 @@ export function PoursPanel() {
           );
         })}
       </ul>
-      {selectedWall && (
-        <div style={{ ...cardStyle, marginTop: 12 }}>
-          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>הקיר הנבחר</div>
-          <label style={labelRow}>
-            <span>יציקה</span>
-            <select
-              value={selectedWall.pourId}
-              onChange={(e) =>
-                dispatch({
-                  type: "update-wall",
-                  wallId: selectedWall.id,
-                  patch: { pourId: e.target.value },
-                })
-              }
-              style={inputStyle}
-            >
-              {pours.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={labelRow}>
-            <span>עובי (ס"מ)</span>
-            <input
-              type="number"
-              min={5}
-              max={80}
-              value={selectedWall.thickness}
-              onChange={(e) =>
-                dispatch({
-                  type: "update-wall",
-                  wallId: selectedWall.id,
-                  patch: { thickness: Number(e.target.value) },
-                })
-              }
-              style={inputStyle}
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => dispatch({ type: "delete-wall", wallId: selectedWall.id })}
-            style={{ ...smallButton, background: "#fee2e2", color: "#b91c1c", marginTop: 8 }}
-          >
-            מחק קיר
-          </button>
-        </div>
-      )}
     </section>
   );
 }
@@ -159,6 +109,3 @@ const headerRow: React.CSSProperties = { display: "flex", alignItems: "center", 
 const h2Style: React.CSSProperties = { margin: 0, fontSize: 14, fontWeight: 600, color: "#0f172a" };
 const smallButton: React.CSSProperties = { background: "#e2e8f0", border: "none", borderRadius: 4, padding: "4px 8px", cursor: "pointer", fontSize: 12, fontFamily: "inherit" };
 const hintStyle: React.CSSProperties = { fontSize: 11, color: "#64748b", margin: "0 0 8px 0", lineHeight: 1.4 };
-const cardStyle: React.CSSProperties = { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4, padding: 8 };
-const labelRow: React.CSSProperties = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, marginBottom: 6 };
-const inputStyle: React.CSSProperties = { fontFamily: "inherit", fontSize: 12, padding: "3px 6px", border: "1px solid #cbd5e1", borderRadius: 3, width: 90 };

@@ -3,6 +3,7 @@ import { Canvas } from "./canvas/Canvas.js";
 import { Toolbar } from "./panels/Toolbar.js";
 import { PoursPanel } from "./panels/PoursPanel.js";
 import { SelectionPanel } from "./panels/SelectionPanel.js";
+import { WallPanel } from "./panels/WallPanel.js";
 import { QuantitiesPanel } from "./panels/QuantitiesPanel.js";
 import { Legend } from "./panels/Legend.js";
 
@@ -37,6 +38,7 @@ export function App() {
           }}
         >
           <PoursPanel />
+          <WallPanel />
           <SelectionPanel />
           <Legend />
         </aside>
