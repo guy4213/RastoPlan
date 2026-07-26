@@ -186,17 +186,30 @@ export function Placements({ walls, placements, selectedPlacementId, scale, onSe
               strokeWidth={(selected ? 2 : 1) / scale}
               opacity={0.92}
             />
-            <Text
-              x={labelPos.x}
-              y={labelPos.y}
-              text={labelText}
-              fontSize={10 / scale}
-              fill={colors.text}
-              rotation={angleDeg}
-              offsetX={(labelText.length * 3) / scale}
-              offsetY={5 / scale}
-              listening={false}
-            />
+            {(() => {
+              // Only render the label when it can actually fit inside the
+              // placement band (with a small margin) — otherwise the letters
+              // spill over neighbouring panels and turn into visual noise.
+              // Selected placement is always labelled so the user can see
+              // what they picked, even if it's cramped.
+              const fontSize = 10 / scale;
+              const labelWidthCm = labelText.length * fontSize * 0.6;
+              const fits = labelWidthCm < placement.width * 0.85;
+              if (!selected && !fits) return null;
+              return (
+                <Text
+                  x={labelPos.x}
+                  y={labelPos.y}
+                  text={labelText}
+                  fontSize={fontSize}
+                  fill={colors.text}
+                  rotation={angleDeg}
+                  offsetX={(labelText.length * 3) / scale}
+                  offsetY={5 / scale}
+                  listening={false}
+                />
+              );
+            })()}
           </Group>
         );
       })}
