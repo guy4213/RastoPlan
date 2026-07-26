@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { Circle, Group, Line } from "react-konva";
+import { Circle, Group, Line, Text } from "react-konva";
 import type Konva from "konva";
 import type { Point, Pour, Wall } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
-import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, snapEndpoint, wallNormal } from "./geometry.js";
+import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, formatLength, snapEndpoint, wallNormal } from "./geometry.js";
 
 interface Props {
   walls: Wall[];
@@ -23,6 +23,10 @@ export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, on
   const { state, dispatch } = useProject();
   const draggable = state.ui.tool === "select";
   const selectedSet = new Set(selectedWallIds);
+  const units = state.ui.units;
+  // Hide length labels on walls shorter than the text would need, and
+  // when zoomed so far out that even a big wall looks < ~60px on screen.
+  const minCmForLabel = 60 / scale;
 
   return (
     <>
@@ -133,10 +137,72 @@ export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, on
                 />
               </>
             )}
+            <WallLengthLabel
+              wall={wall}
+              scale={scale}
+              units={units}
+              highlight={selected}
+              hidden={Math.hypot(b.x - a.x, b.y - a.y) < minCmForLabel}
+            />
           </Group>
         );
       })}
     </>
+  );
+}
+
+/**
+ * Length text centred on the wall, offset onto the outer side by the
+ * wall's normal so it doesn't clip the stroke. Rotated to match the
+ * wall's angle so long labels stay readable at any orientation.
+ */
+function WallLengthLabel({
+  wall,
+  scale,
+  units,
+  highlight,
+  hidden,
+}: {
+  wall: Wall;
+  scale: number;
+  units: "cm" | "m";
+  highlight: boolean;
+  hidden: boolean;
+}) {
+  if (hidden) return null;
+  const [a, b] = wall.innerLine;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthCm = Math.hypot(dx, dy);
+  if (lengthCm < 1) return null;
+  const midX = (a.x + b.x) / 2;
+  const midY = (a.y + b.y) / 2;
+  const nx = dy / lengthCm;
+  const ny = -dx / lengthCm;
+  // Push the label onto the outer (positive normal) side, past the
+  // outer-face dashed line, so it sits in the free space.
+  const push = wall.thickness + 12 / scale;
+  const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+  // Keep text upright — if the wall points to the left half, flip so
+  // the text isn't read upside-down.
+  const flip = angleDeg > 90 || angleDeg < -90;
+  const finalAngle = flip ? angleDeg + 180 : angleDeg;
+  const finalPush = flip ? -push : push;
+  const text = formatLength(lengthCm, units);
+  const fontSize = 12 / scale;
+  return (
+    <Text
+      x={midX + nx * finalPush}
+      y={midY + ny * finalPush}
+      text={text}
+      fontSize={fontSize}
+      fill={highlight ? "#0f172a" : "#334155"}
+      fontStyle={highlight ? "bold" : "normal"}
+      rotation={finalAngle}
+      offsetX={(text.length * fontSize * 0.28)}
+      offsetY={fontSize / 2}
+      listening={false}
+    />
   );
 }
 

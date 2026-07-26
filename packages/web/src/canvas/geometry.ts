@@ -109,3 +109,16 @@ export function snapEndpoint(
  */
 export const ENDPOINT_SNAP_PIXELS = 16;
 
+/**
+ * Format an internal-cm length for display. Rounding is display-only —
+ * storage and math keep the raw cm number so accumulated edits don't
+ * drift by fractions of a centimeter.
+ */
+export function formatLength(cm: number, units: "cm" | "m"): string {
+  if (units === "m") {
+    const meters = cm / 100;
+    return `${meters.toFixed(2)} מ'`;
+  }
+  return `${Math.round(cm)} ס"מ`;
+}
+

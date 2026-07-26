@@ -7,7 +7,7 @@ import { Grid } from "./Grid.js";
 import { Walls } from "./Walls.js";
 import { Placements } from "./Placements.js";
 import { WeldOverlay } from "./WeldOverlay.js";
-import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, snapEndpoint } from "./geometry.js";
+import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, formatLength, snapEndpoint } from "./geometry.js";
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 5;
@@ -82,7 +82,7 @@ export function Canvas() {
   const { state, dispatch } = useProject();
   const containerRef = useRef<HTMLDivElement>(null);
   const size = useSize(containerRef);
-  const { view, tool, selectedWallId, selectedWallIds, selectedPlacementId } = state.ui;
+  const { view, tool, selectedWallId, selectedWallIds, selectedPlacementId, units } = state.ui;
   const { walls, pours, placements } = state.project;
 
   const [drawStart, setDrawStart] = useState<Point | null>(null);
@@ -449,7 +449,7 @@ export function Canvas() {
               <Text
                 x={(drawStart.x + drawEnd.x) / 2}
                 y={(drawStart.y + drawEnd.y) / 2 - 12 / view.scale}
-                text={`${Math.round(Math.hypot(drawEnd.x - drawStart.x, drawEnd.y - drawStart.y))} ס"מ`}
+                text={formatLength(Math.hypot(drawEnd.x - drawStart.x, drawEnd.y - drawStart.y), units)}
                 fontSize={12 / view.scale}
                 fill="#0f172a"
               />

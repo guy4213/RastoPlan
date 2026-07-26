@@ -32,7 +32,7 @@ function findFreeEndpoints(walls: { id: string; innerLine: [Point, Point] }[]): 
 
 export function Toolbar() {
   const { state, dispatch } = useProject();
-  const { tool, layoutDirty, activePourId } = state.ui;
+  const { tool, layoutDirty, activePourId, units } = state.ui;
   const [notice, setNotice] = useState<string | null>(null);
 
   const showNotice = (msg: string) => {
@@ -128,6 +128,22 @@ export function Toolbar() {
       )}
 
       <div style={{ marginInlineStart: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        <div
+          role="group"
+          style={{
+            display: "inline-flex",
+            border: "1px solid #cbd5e1",
+            borderRadius: 4,
+            overflow: "hidden",
+          }}
+        >
+          <UnitButton active={units === "cm"} onClick={() => dispatch({ type: "set-units", units: "cm" })}>
+            ס"מ
+          </UnitButton>
+          <UnitButton active={units === "m"} onClick={() => dispatch({ type: "set-units", units: "m" })}>
+            מ'
+          </UnitButton>
+        </div>
         {layoutDirty && state.project.walls.length > 0 && (
           <span style={{ fontSize: 12, color: "#b45309" }}>הפריסה אינה מעודכנת</span>
         )}
@@ -200,6 +216,26 @@ function Hotkey({ children }: { children: React.ReactNode }) {
     >
       {children}
     </kbd>
+  );
+}
+
+function UnitButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "4px 10px",
+        background: active ? "#0f172a" : "#fff",
+        color: active ? "#fff" : "#0f172a",
+        border: "none",
+        fontFamily: "inherit",
+        fontSize: 12,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Point } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
+import { formatLength } from "../canvas/geometry.js";
 
 /**
  * Rotate a point around origin by the given angle in degrees. Used to
@@ -15,6 +16,7 @@ function polarOffset(lengthCm: number, angleDeg: number): Point {
 export function WallPanel() {
   const { state, dispatch } = useProject();
   const wall = state.project.walls.find((w) => w.id === state.ui.selectedWallId) ?? null;
+  const units = state.ui.units;
 
   // Numeric length draft — buffered so intermediate values (e.g. an
   // in-progress "40" typed toward "400") don't rewrite the wall on every
@@ -83,6 +85,11 @@ export function WallPanel() {
             style={inputStyle}
           />
         </Row>
+        {units === "m" && (
+          <Row label="≈ במטרים">
+            <span>{formatLength(Math.hypot(b.x - a.x, b.y - a.y), "m")}</span>
+          </Row>
+        )}
         <Row label="יציקה">
           <select
             value={wall.pourId}

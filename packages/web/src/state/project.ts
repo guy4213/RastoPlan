@@ -3,6 +3,8 @@ import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG, tileProject } from "@ra
 
 export type Tool = "select" | "draw-wall" | "weld";
 
+export type Units = "cm" | "m";
+
 export interface UiState {
   tool: Tool;
   activePourId: string | null;
@@ -18,6 +20,8 @@ export interface UiState {
   view: { scale: number; offset: Point };
   /** Set when the computed layout is out-of-date relative to walls/pours. */
   layoutDirty: boolean;
+  /** Display units. Internal storage is always cm. */
+  units: Units;
 }
 
 export interface AppState {
@@ -61,6 +65,7 @@ export function initialAppState(project: Project): AppState {
       selectedPlacementId: null,
       view: { scale: 0.5, offset: { x: 100, y: 100 } },
       layoutDirty: false,
+      units: "cm",
     },
   };
 }
@@ -74,6 +79,7 @@ export type Action =
   | { type: "set-selected-walls"; wallIds: string[] }
   | { type: "select-placement"; placementId: string | null }
   | { type: "set-view"; view: UiState["view"] }
+  | { type: "set-units"; units: Units }
   | { type: "add-pour" }
   | { type: "update-pour"; pourId: string; patch: Partial<Pour> }
   | { type: "delete-pour"; pourId: string }
@@ -166,6 +172,8 @@ export function reduce(state: AppState, action: Action): AppState {
       };
     case "set-view":
       return { ...state, ui: { ...state.ui, view: action.view } };
+    case "set-units":
+      return { ...state, ui: { ...state.ui, units: action.units } };
 
     case "add-pour": {
       const order = state.project.pours.length;
