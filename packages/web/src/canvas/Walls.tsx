@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { Circle, Group, Line } from "react-konva";
 import type Konva from "konva";
 import type { Point, Pour, Wall } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
-import { snapEndpoint, wallNormal } from "./geometry.js";
+import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, snapEndpoint, wallNormal } from "./geometry.js";
 
 interface Props {
   walls: Wall[];
@@ -49,7 +50,7 @@ export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, on
           // Endpoint-snap the whole-wall translation to nearby corners of
           // other walls (so the moved wall lands cleanly on an existing
           // junction if the user releases near one).
-          const snappedA = snapEndpoint(newA, otherWalls, null, 20);
+          const snappedA = snapEndpoint(newA, otherWalls, null, ENDPOINT_SNAP_PIXELS / scale);
           const deltaAfterSnapA = { x: snappedA.x - newA.x, y: snappedA.y - newA.y };
           const finalA = snappedA;
           const finalB = { x: newB.x + deltaAfterSnapA.x, y: newB.y + deltaAfterSnapA.y };
@@ -152,37 +153,54 @@ function EndpointHandle({
   otherEndpoint: Point;
   onCommit: (p: Point) => void;
 }) {
+  const [snapTarget, setSnapTarget] = useState<Point | null>(null);
+  const snapCm = ENDPOINT_SNAP_PIXELS / scale;
   return (
-    <Circle
-      x={point.x}
-      y={point.y}
-      radius={6 / scale}
-      fill="#fff"
-      stroke="#0f172a"
-      strokeWidth={1.5 / scale}
-      draggable
-      onDragMove={(e) => {
-        // Snap the endpoint during drag so the user sees where it will
-        // land — right-angle snap uses the other endpoint as origin, and
-        // corner snap picks up nearby endpoints from other walls.
-        const raw: Point = { x: e.target.x(), y: e.target.y() };
-        const snapped = snapEndpoint(raw, otherWalls, otherEndpoint, 20);
-        e.target.x(snapped.x);
-        e.target.y(snapped.y);
-      }}
-      onDragEnd={(e) => {
-        const raw: Point = { x: e.target.x(), y: e.target.y() };
-        const snapped = snapEndpoint(raw, otherWalls, otherEndpoint, 20);
-        onCommit({ x: Math.round(snapped.x), y: Math.round(snapped.y) });
-      }}
-      onMouseEnter={(e) => {
-        const stage = e.target.getStage();
-        if (stage) stage.container().style.cursor = "grab";
-      }}
-      onMouseLeave={(e) => {
-        const stage = e.target.getStage();
-        if (stage) stage.container().style.cursor = "";
-      }}
-    />
+    <>
+      <Circle
+        x={point.x}
+        y={point.y}
+        radius={6 / scale}
+        fill="#fff"
+        stroke="#0f172a"
+        strokeWidth={1.5 / scale}
+        draggable
+        onDragMove={(e) => {
+          // Snap the endpoint during drag so the user sees where it will
+          // land — right-angle snap uses the other endpoint as origin, and
+          // corner snap picks up nearby endpoints from other walls.
+          const raw: Point = { x: e.target.x(), y: e.target.y() };
+          const snapped = snapEndpoint(raw, otherWalls, otherEndpoint, snapCm);
+          e.target.x(snapped.x);
+          e.target.y(snapped.y);
+          setSnapTarget(findEndpointSnapTarget(raw, otherWalls, snapCm));
+        }}
+        onDragEnd={(e) => {
+          const raw: Point = { x: e.target.x(), y: e.target.y() };
+          const snapped = snapEndpoint(raw, otherWalls, otherEndpoint, snapCm);
+          setSnapTarget(null);
+          onCommit({ x: Math.round(snapped.x), y: Math.round(snapped.y) });
+        }}
+        onMouseEnter={(e) => {
+          const stage = e.target.getStage();
+          if (stage) stage.container().style.cursor = "grab";
+        }}
+        onMouseLeave={(e) => {
+          const stage = e.target.getStage();
+          if (stage) stage.container().style.cursor = "";
+        }}
+      />
+      {snapTarget && (
+        <Circle
+          x={snapTarget.x}
+          y={snapTarget.y}
+          radius={8 / scale}
+          stroke="#f59e0b"
+          strokeWidth={2 / scale}
+          fill="rgba(245, 158, 11, 0.25)"
+          listening={false}
+        />
+      )}
+    </>
   );
 }

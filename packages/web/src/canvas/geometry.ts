@@ -55,8 +55,31 @@ export function placementCorners(
 }
 
 /**
+ * Nearest existing wall endpoint within `endpointSnapCm`, or null. Kept
+ * separate from snapEndpoint so callers can render a visual target hint
+ * (a highlighted circle) without re-implementing the search.
+ */
+export function findEndpointSnapTarget(
+  candidate: Point,
+  walls: Wall[],
+  endpointSnapCm: number
+): Point | null {
+  let best: { d: number; p: Point } | null = null;
+  for (const w of walls) {
+    for (const p of w.innerLine) {
+      const d = Math.hypot(p.x - candidate.x, p.y - candidate.y);
+      if (d <= endpointSnapCm && (best === null || d < best.d)) {
+        best = { d, p };
+      }
+    }
+  }
+  return best ? best.p : null;
+}
+
+/**
  * Snap a candidate wall endpoint (in cm) to the nearest of:
- * 1. an existing wall endpoint (within `endpointSnapCm`);
+ * 1. an existing wall endpoint (within `endpointSnapCm`) — returned
+ *    verbatim so the new wall shares the exact vertex coordinate;
  * 2. an axis-aligned direction from `origin` (if origin provided) — the
  *    stronger axis wins so the user gets a horizontal or vertical wall
  *    almost automatically.
@@ -67,23 +90,22 @@ export function snapEndpoint(
   origin: Point | null,
   endpointSnapCm: number
 ): Point {
-  let snapped = candidate;
-
-  // Endpoint snap has priority — grabbing a corner should always work.
-  let best = { d: Infinity, p: candidate };
-  for (const w of walls) {
-    for (const p of w.innerLine) {
-      const d = Math.hypot(p.x - candidate.x, p.y - candidate.y);
-      if (d < best.d && d <= endpointSnapCm) best = { d, p };
-    }
-  }
-  if (best.d !== Infinity) return best.p;
+  const target = findEndpointSnapTarget(candidate, walls, endpointSnapCm);
+  if (target) return target;
 
   if (origin) {
     const dx = Math.abs(candidate.x - origin.x);
     const dy = Math.abs(candidate.y - origin.y);
-    if (dx > dy) snapped = { x: candidate.x, y: origin.y };
-    else snapped = { x: origin.x, y: candidate.y };
+    if (dx > dy) return { x: candidate.x, y: origin.y };
+    return { x: origin.x, y: candidate.y };
   }
-  return snapped;
+  return candidate;
 }
+
+/**
+ * Screen-pixel snap radius for endpoint targeting. Converting to cm at
+ * the call site (via 1 / scale) keeps the "hot zone" the same visual
+ * size regardless of zoom — otherwise it's unreachable when zoomed out.
+ */
+export const ENDPOINT_SNAP_PIXELS = 16;
+

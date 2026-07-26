@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Layer, Line, Rect, Stage, Text } from "react-konva";
+import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import type { Point } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
 import { Grid } from "./Grid.js";
 import { Walls } from "./Walls.js";
 import { Placements } from "./Placements.js";
-import { snapEndpoint } from "./geometry.js";
+import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, snapEndpoint } from "./geometry.js";
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 5;
@@ -97,6 +97,11 @@ export function Canvas() {
   // Marquee (crossing window) in world coords; while active, the stage
   // must not pan or the rect will drift out from under the cursor.
   const [marquee, setMarquee] = useState<MarqueeRect | null>(null);
+  // Vertex the next endpoint would snap to — rendered as a highlighted
+  // circle so the user sees the lock happening before releasing.
+  const [snapHint, setSnapHint] = useState<Point | null>(null);
+
+  const snapCm = ENDPOINT_SNAP_PIXELS / view.scale;
 
   const stageToWorld = useCallback(
     (stageX: number, stageY: number): Point => ({
@@ -145,6 +150,7 @@ export function Canvas() {
     setDrawStart(null);
     setDrawEnd(null);
     setDrawMode("idle");
+    setSnapHint(null);
     mouseDownPixelRef.current = null;
   }, []);
 
@@ -174,19 +180,20 @@ export function Canvas() {
 
       // Second click of a click-click draw commits the wall.
       if (drawMode === "awaiting-second" && drawStart) {
-        const end = applyAxisLock(drawStart, snapEndpoint(world, walls, drawStart, 20), e.evt.shiftKey);
+        const end = applyAxisLock(drawStart, snapEndpoint(world, walls, drawStart, snapCm), e.evt.shiftKey);
         commitWall(drawStart, end);
         cancelDraw();
         return;
       }
 
-      const snapped = snapEndpoint(world, walls, null, 20);
+      const snapped = snapEndpoint(world, walls, null, snapCm);
       setDrawStart(snapped);
       setDrawEnd(snapped);
       setDrawMode("dragging");
+      setSnapHint(findEndpointSnapTarget(world, walls, snapCm));
       mouseDownPixelRef.current = { x: pointer.x, y: pointer.y };
     },
-    [tool, walls, stageToWorld, drawMode, drawStart, commitWall, cancelDraw]
+    [tool, walls, stageToWorld, drawMode, drawStart, commitWall, cancelDraw, snapCm]
   );
 
   const handleMouseMove = useCallback(
@@ -203,10 +210,11 @@ export function Canvas() {
 
       if (tool !== "draw-wall" || !drawStart) return;
       const world = stageToWorld(pointer.x, pointer.y);
-      const snapped = snapEndpoint(world, walls, drawStart, 20);
+      const snapped = snapEndpoint(world, walls, drawStart, snapCm);
       setDrawEnd(applyAxisLock(drawStart, snapped, e.evt.shiftKey));
+      setSnapHint(findEndpointSnapTarget(world, walls, snapCm));
     },
-    [tool, drawStart, walls, stageToWorld, marquee]
+    [tool, drawStart, walls, stageToWorld, marquee, snapCm]
   );
 
   const handleMouseUp = useCallback(
@@ -418,6 +426,17 @@ export function Canvas() {
                 fill="#0f172a"
               />
             </>
+          )}
+          {snapHint && (
+            <Circle
+              x={snapHint.x}
+              y={snapHint.y}
+              radius={8 / view.scale}
+              stroke="#f59e0b"
+              strokeWidth={2 / view.scale}
+              fill="rgba(245, 158, 11, 0.25)"
+              listening={false}
+            />
           )}
         </Layer>
       </Stage>
