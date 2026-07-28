@@ -13,15 +13,14 @@ import { syncOuterPlacements } from "./syncOuterPlacements.js";
  *
  * Pipeline:
  *   1. buildGraph → classifyNodes → classifyCornerSides.
- *   2. placeCornerPanels: emits C30x30 at inner corners, 10cm protrusion
- *      markers at outer corners, and returns edges with clearLength
+ *   2. placeCornerPanels: emits a C30x30 on the inner face at every L corner,
+ *      overlap markers at outer corners, and returns edges with clearLength
  *      recomputed for the real corner rules (not computeClearLengths's
  *      placeholder).
  *   3. For each edge: tileWall(clearLength) → straight-run inner placements.
- *   4. syncOuterPlacements: mirrors inner corner panels + straight inner
- *      tiling onto the outer face at identical offsets (Dywidag alignment).
- *      Outer-only protrusion markers are appended separately (no inner
- *      counterpart).
+ *   4. syncOuterPlacements: mirrors the straight inner tiling onto the outer
+ *      face at identical offsets (Dywidag alignment). Corner panels stay
+ *      inner-only and outer-only overlap markers are appended separately.
  *
  * The step-2 clearLength recompute is why we don't call computeClearLengths
  * inside this pipeline — it would apply the placeholder deduction the
@@ -42,18 +41,17 @@ export function tileProject(project: Project): Placement[] {
     const wall = wallById.get(edge.wallId);
     if (!wall) continue;
 
-    // Every inner-side placement on this edge, in one bucket, so sync
-    // produces a matching outer-side placement for each and Dywidag
-    // alignment holds for both the C30x30 corners and the straight tiles.
+    // Only the straight run is mirrored: the outer face carries straight
+    // panels plus an overlap at the corner, never a corner panel. Dywidag
+    // alignment is asserted over that shared straight run.
     const innerCorners = corners.innerCornerPanels.filter((p) => p.edgeId === edge.id);
     const innerTiles = tileWall(edge, wall.pourId, catalog, rules);
-    const innerSide = [...innerCorners, ...innerTiles];
 
-    const outerSide = syncOuterPlacements(innerSide);
+    const outerSide = syncOuterPlacements(innerTiles);
 
     const outerProtrusions = corners.outerCornerProtrusions.filter((p) => p.edgeId === edge.id);
 
-    allPlacements.push(...innerSide, ...outerSide, ...outerProtrusions);
+    allPlacements.push(...innerCorners, ...innerTiles, ...outerSide, ...outerProtrusions);
   }
 
   return allPlacements;

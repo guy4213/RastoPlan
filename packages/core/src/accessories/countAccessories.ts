@@ -1,5 +1,7 @@
-import type { AccessoryRules, Edge, Node, Placement } from "../types.js";
+import type { AccessoryRules, Edge, Placement, Wall } from "../types.js";
 import type { AccessoryCount } from "./types.js";
+import { collapsePlacementUnits } from "./units.js";
+import { classifyDywidagLength, dywidagRodsForJoint } from "./dywidag.js";
 
 /**
  * Counts every accessory line item from the CURRENT state of `placements`.
@@ -8,35 +10,41 @@ import type { AccessoryCount } from "./types.js";
  * user hand-edits a placement in the canvas, calling this again will
  * reflect that edit. Nothing is memoized from a previous auto-tile.
  *
- * Assumptions flagged in the session summary:
- * - "corner" = every graph node with type='L' (both inner and outer L). T
- *   and cross nodes carry an unresolved flag and are NOT counted here.
- * - "straight joint" = two consecutive placements on an edge's inner face
- *   with contiguous offsets AND kind='panel' on both sides. Corner-to-panel
- *   and panel-to-timber transitions do NOT count as straight joints
- *   (corner clamps cover the former; timber seams aren't panel-to-panel).
- * - "tie point" for Dywidag = one per straight joint (dywidagRods =
- *   joints × rules.dywidagPerRod). The spec's rules don't disambiguate
- *   between per-joint and per-panel-hole counting, so this is the choice
- *   that keeps rod count proportional to clampable seams.
+ * The clamp rules mirror the formulas in the customer's own BOM sheets:
+ * - corner clamps (K30) = corner-panel units × 3 (their `=F27*3`). Every L
+ *   corner carries one corner panel, so this is equivalently "3 per corner".
+ * - straight clamps (K10) = straight panels × 3 (their
+ *   `=((SUM(all panels))-4)*3`, where the 4 was the corner-panel count).
+ *   Note this counts per PANEL, not per seam.
+ *
+ * Other assumptions:
+ * - "tie point" for Dywidag = one per straight joint; the quantity rule
+ *   itself is still open — see dywidag.ts.
  * - Struts are counted from `edges` (per-wall geometry), NOT per placement
  *   or per side. They apply to the inner side only.
  */
 export function countAccessories(
   placements: Placement[],
-  nodes: Node[],
   edges: Edge[],
+  walls: Wall[],
   rules: AccessoryRules
 ): AccessoryCount {
-  const corners = nodes.filter((n) => n.type === "L").length;
-  const straightJoints = countStraightJoints(placements);
-  const dywidagRods = straightJoints * rules.dywidagPerRod;
+  const units = collapsePlacementUnits(placements).filter(
+    (p) => p.panelType && !p.flags.includes("outer-corner-protrusion")
+  );
+  const cornerUnits = units.filter((p) => p.kind === "corner-panel").length;
+  const straightPanels = units.length - cornerUnits;
+
+  const rods = countDywidagRods(placements, edges, walls, rules);
+  const totalRods = rods.standard + rods.long;
 
   return {
-    cornerClamps: corners * rules.cornerClampsPerCorner,
-    straightClamps: straightJoints * rules.clampsPerStraightJoint,
-    dywidagRods,
-    nuts: dywidagRods * rules.nutsPerDywidag,
+    cornerClamps: cornerUnits * rules.cornerClampsPerCorner,
+    straightClamps: straightPanels * rules.clampsPerStraightJoint,
+    dywidagRods: totalRods,
+    dywidagRodsStandard: rods.standard,
+    dywidagRodsLong: rods.long,
+    nuts: totalRods * rules.nutsPerDywidag,
     struts: sumStruts(edges, rules.strutSpacingCm),
     craneAdapters: rules.craneAdaptersPerProject,
   };
@@ -48,24 +56,17 @@ export function countAccessories(
  * would double every physical seam.
  */
 export function countStraightJoints(placements: Placement[]): number {
-  const byEdge = groupInnerPlacementsByEdge(placements);
-  let joints = 0;
-  for (const arr of byEdge.values()) {
-    arr.sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
-    for (let i = 0; i < arr.length - 1; i++) {
-      const a = arr[i]!;
-      const b = arr[i + 1]!;
-      // Widths and offsets are whole centimeters throughout the spec, so
-      // exact equality — not tolerance — is the right adjacency test.
-      if (a.offsetAlongEdge + a.width !== b.offsetAlongEdge) continue;
-      if (a.kind !== "panel" || b.kind !== "panel") continue;
-      joints++;
-    }
-  }
-  return joints;
+  let total = 0;
+  for (const joints of straightJointsByEdge(placements).values()) total += joints;
+  return total;
 }
 
-function groupInnerPlacementsByEdge(placements: Placement[]): Map<string, Placement[]> {
+/**
+ * Joints per edge, so Dywidag rod length can be resolved against that edge's
+ * wall thickness. A corner panel butting against the first straight panel
+ * counts: it is a real seam, clamped like any other.
+ */
+export function straightJointsByEdge(placements: Placement[]): Map<string, number> {
   const byEdge = new Map<string, Placement[]>();
   for (const p of placements) {
     if (p.side !== "inner") continue;
@@ -73,7 +74,48 @@ function groupInnerPlacementsByEdge(placements: Placement[]): Map<string, Placem
     arr.push(p);
     byEdge.set(p.edgeId, arr);
   }
-  return byEdge;
+
+  const joints = new Map<string, number>();
+  for (const [edgeId, arr] of byEdge) {
+    arr.sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
+    let count = 0;
+    for (let i = 0; i < arr.length - 1; i++) {
+      const a = arr[i]!;
+      const b = arr[i + 1]!;
+      // Widths and offsets are whole centimeters throughout the spec, so
+      // exact equality — not tolerance — is the right adjacency test.
+      if (a.offsetAlongEdge + a.width !== b.offsetAlongEdge) continue;
+      if (a.kind === "timber" || b.kind === "timber") continue;
+      count++;
+    }
+    joints.set(edgeId, count);
+  }
+  return joints;
+}
+
+export interface DywidagRodTally {
+  standard: number;
+  long: number;
+}
+
+/** Rods per edge, bucketed by the rod length that edge's wall thickness calls for. */
+export function countDywidagRods(
+  placements: Placement[],
+  edges: Edge[],
+  walls: Wall[],
+  rules: AccessoryRules
+): DywidagRodTally {
+  const wallById = new Map(walls.map((w) => [w.id, w]));
+  const edgeById = new Map(edges.map((e) => [e.id, e]));
+
+  const tally: DywidagRodTally = { standard: 0, long: 0 };
+  for (const [edgeId, joints] of straightJointsByEdge(placements)) {
+    const rods = joints * dywidagRodsForJoint(rules);
+    const wall = wallById.get(edgeById.get(edgeId)?.wallId ?? "");
+    if (classifyDywidagLength(wall?.thickness ?? 0, rules) === "long") tally.long += rods;
+    else tally.standard += rods;
+  }
+  return tally;
 }
 
 function sumStruts(edges: Edge[], spacingCm: number): number {

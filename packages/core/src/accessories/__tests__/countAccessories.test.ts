@@ -1,18 +1,19 @@
 import { describe, expect, it } from "vitest";
-import type { Edge, Node, Placement } from "../../types.js";
+import type { Edge, Placement, Wall } from "../../types.js";
 import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
 import { buildGraph } from "../../geometry/buildGraph.js";
 import { classifyNodes } from "../../geometry/classifyNodes.js";
 import { classifyCornerSides } from "../../geometry/classifyCornerSides.js";
-import { rectangleWalls } from "../../geometry/__tests__/fixtures.js";
+import { lShapeWalls, rectangleWalls } from "../../geometry/__tests__/fixtures.js";
 import { placeCornerPanels } from "../../corners/placeCornerPanels.js";
 import { tileProject } from "../../corners/tileProject.js";
 import { countAccessories, countStraightJoints } from "../countAccessories.js";
+import { countPanels } from "../countPanels.js";
 import { projectOf } from "./fixtures.js";
 
-function buildGraphContext(walls: ReturnType<typeof rectangleWalls>): {
-  nodes: Node[];
+function buildGraphContext(walls: Wall[]): {
   edges: Edge[];
+  walls: Wall[];
   placements: Placement[];
 } {
   const { nodes, edges } = buildGraph(walls);
@@ -25,41 +26,88 @@ function buildGraphContext(walls: ReturnType<typeof rectangleWalls>): {
     DEFAULT_ACCESSORY_RULES
   );
   const placements = tileProject(projectOf(walls));
-  return { nodes: classified, edges: corners.edges, placements };
+  return { edges: corners.edges, walls, placements };
 }
 
 describe("countAccessories — rectangular room, manual verification", () => {
   it("matches hand-counted totals for a 400×300 box (thickness 20)", () => {
-    const { nodes, edges, placements } = buildGraphContext(rectangleWalls());
-    const count = countAccessories(placements, nodes, edges, DEFAULT_ACCESSORY_RULES);
+    const ctx = buildGraphContext(rectangleWalls());
+    const count = countAccessories(ctx.placements, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
 
-    // 4 L corners × 3 clamps.
+    // 4 corners, each with one corner panel × 3 K30 clamps.
     expect(count.cornerClamps).toBe(12);
-    // Struts (inner only): ceil(400/150)+ceil(300/150)+ceil(400/150)+ceil(300/150) = 3+2+3+2.
+    // Struts (inner only): each 400 wall runs 340 clear, each 300 wall 240.
+    // ceil(340/150)+ceil(240/150)+ceil(340/150)+ceil(240/150) = 3+2+3+2.
     expect(count.struts).toBe(10);
     // Fixed per project regardless of size.
     expect(count.craneAdapters).toBe(2);
-    // Joints tie together the clamps/rods/nuts trio, so they must stay in lock-step:
-    // straightClamps = joints × 3, dywidag = joints × 2, nuts = dywidag × 2.
-    const joints = countStraightJoints(placements);
-    expect(count.straightClamps).toBe(joints * DEFAULT_ACCESSORY_RULES.clampsPerStraightJoint);
+    // Rods and nuts stay in lock-step with the tie points.
+    const joints = countStraightJoints(ctx.placements);
     expect(count.dywidagRods).toBe(joints * DEFAULT_ACCESSORY_RULES.dywidagPerRod);
     expect(count.nuts).toBe(count.dywidagRods * DEFAULT_ACCESSORY_RULES.nutsPerDywidag);
   });
 });
 
+describe("countAccessories — the customer's clamp formulas", () => {
+  it("a box has FOUR C30x30 units — one per corner, not zero and not one per leg", () => {
+    const ctx = buildGraphContext(rectangleWalls());
+    const panels = countPanels(ctx.placements);
+
+    // The corner panel wraps the corner and is emitted once per meeting
+    // wall, but it is one physical panel. This is the number that has to
+    // line up with the customer's BOM (בית שמש יציקה 2: 4 × פנאל 30/30/300).
+    expect(panels.byType.C30x30).toBe(4);
+  });
+
+  it("K30 corner clamps = corner-panel units × 3 (the sheet's =F27*3)", () => {
+    const ctx = buildGraphContext(rectangleWalls());
+    const count = countAccessories(ctx.placements, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
+    const cornerUnits = countPanels(ctx.placements).byType.C30x30 ?? 0;
+
+    expect(cornerUnits).toBe(4);
+    expect(count.cornerClamps).toBe(cornerUnits * 3);
+    expect(count.cornerClamps).toBe(12);
+  });
+
+  it("K10 straight clamps = (all panels − corner panels) × 3 (the sheet's =((SUM(...))-4)*3)", () => {
+    const ctx = buildGraphContext(rectangleWalls());
+    const count = countAccessories(ctx.placements, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
+
+    const panels = countPanels(ctx.placements);
+    const allUnits = Object.values(panels.byType).reduce((a, b) => a + b, 0);
+    const cornerUnits = panels.byType.C30x30 ?? 0;
+
+    expect(count.straightClamps).toBe((allUnits - cornerUnits) * 3);
+  });
+
+  it("L-shape: every one of the 6 corners gets a corner panel, convex ones included", () => {
+    const ctx = buildGraphContext(lShapeWalls());
+    const count = countAccessories(ctx.placements, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
+
+    // 5 convex + 1 concave — the distinction no longer decides whether a
+    // corner panel exists, only where the outer overlap goes.
+    expect(countPanels(ctx.placements).byType.C30x30).toBe(6);
+    expect(count.cornerClamps).toBe(18);
+  });
+});
+
 describe("countAccessories — struts", () => {
   it("counts inner side ONLY — outer-face placements never inflate the strut count", () => {
-    const { nodes, edges, placements } = buildGraphContext(rectangleWalls());
+    const ctx = buildGraphContext(rectangleWalls());
 
-    const outerCount = placements.filter((p) => p.side === "outer").length;
+    const outerCount = ctx.placements.filter((p) => p.side === "outer").length;
     expect(outerCount).toBeGreaterThan(0);
 
-    const withPlacements = countAccessories(placements, nodes, edges, DEFAULT_ACCESSORY_RULES);
+    const withPlacements = countAccessories(
+      ctx.placements,
+      ctx.edges,
+      ctx.walls,
+      DEFAULT_ACCESSORY_RULES
+    );
     // Struts read only from `edges`, not `placements` — dropping every
     // outer-face placement mustn't change the number.
-    const innerOnly = placements.filter((p) => p.side === "inner");
-    const withoutOuter = countAccessories(innerOnly, nodes, edges, DEFAULT_ACCESSORY_RULES);
+    const innerOnly = ctx.placements.filter((p) => p.side === "inner");
+    const withoutOuter = countAccessories(innerOnly, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
     expect(withoutOuter.struts).toBe(withPlacements.struts);
   });
 
@@ -67,7 +115,7 @@ describe("countAccessories — struts", () => {
     const edges: Edge[] = [
       { id: "e1", wallId: "w1", nodeA: "n0", nodeB: "n1", clearLength: 310, flags: [] },
     ];
-    const count = countAccessories([], [], edges, DEFAULT_ACCESSORY_RULES);
+    const count = countAccessories([], edges, [], DEFAULT_ACCESSORY_RULES);
     expect(count.struts).toBe(3);
   });
 
@@ -75,7 +123,7 @@ describe("countAccessories — struts", () => {
     const edges: Edge[] = [
       { id: "e1", wallId: "w1", nodeA: "n0", nodeB: "n1", clearLength: 300, flags: [] },
     ];
-    const count = countAccessories([], [], edges, DEFAULT_ACCESSORY_RULES);
+    const count = countAccessories([], edges, [], DEFAULT_ACCESSORY_RULES);
     expect(count.struts).toBe(2);
   });
 
@@ -83,7 +131,7 @@ describe("countAccessories — struts", () => {
     const edges: Edge[] = [
       { id: "e1", wallId: "w1", nodeA: "n0", nodeB: "n1", clearLength: 0, flags: [] },
     ];
-    const count = countAccessories([], [], edges, DEFAULT_ACCESSORY_RULES);
+    const count = countAccessories([], edges, [], DEFAULT_ACCESSORY_RULES);
     expect(count.struts).toBe(0);
   });
 });
@@ -102,8 +150,8 @@ describe("countAccessories — crane adapters", () => {
       flags: [],
     }));
 
-    const small = countAccessories([], [], smallRoom, DEFAULT_ACCESSORY_RULES);
-    const big = countAccessories([], [], bigRoom, DEFAULT_ACCESSORY_RULES);
+    const small = countAccessories([], smallRoom, [], DEFAULT_ACCESSORY_RULES);
+    const big = countAccessories([], bigRoom, [], DEFAULT_ACCESSORY_RULES);
     expect(small.craneAdapters).toBe(2);
     expect(big.craneAdapters).toBe(2);
   });
@@ -118,15 +166,15 @@ describe("countAccessories — crane adapters", () => {
 });
 
 describe("countAccessories — robustness under manual edit", () => {
-  it("reflects a hand-inserted placement (added panel-to-panel joint bumps the joint count)", () => {
-    const { nodes, edges, placements } = buildGraphContext(rectangleWalls());
-    const before = countAccessories(placements, nodes, edges, DEFAULT_ACCESSORY_RULES);
+  it("reflects a hand-inserted placement (an added panel bumps the clamp count)", () => {
+    const ctx = buildGraphContext(rectangleWalls());
+    const before = countAccessories(ctx.placements, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
 
     // Find an inner edge and splice a synthetic 20cm panel right after
-    // the first straight panel there — creating one extra panel-to-panel
-    // joint that didn't exist in the auto-tile output.
-    const anEdgeId = placements.find((p) => p.side === "inner" && p.kind === "panel")!.edgeId;
-    const edgePlacements = placements
+    // the first straight panel there — creating one extra panel, and one
+    // extra panel-to-panel joint that the auto-tile didn't produce.
+    const anEdgeId = ctx.placements.find((p) => p.side === "inner" && p.kind === "panel")!.edgeId;
+    const edgePlacements = ctx.placements
       .filter((p) => p.edgeId === anEdgeId && p.side === "inner" && p.kind === "panel")
       .sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
     const first = edgePlacements[0]!;
@@ -143,7 +191,7 @@ describe("countAccessories — robustness under manual edit", () => {
       flags: [],
     };
     // Shift everything after by +20 so adjacencies keep matching.
-    const shifted = placements.map((p) => {
+    const shifted = ctx.placements.map((p) => {
       if (p.edgeId !== anEdgeId || p.side !== "inner") return p;
       if (p.offsetAlongEdge < first.offsetAlongEdge + first.width) return p;
       if (p.id === first.id) return p;
@@ -151,10 +199,10 @@ describe("countAccessories — robustness under manual edit", () => {
     });
 
     const edited = [...shifted, inserted];
-    const after = countAccessories(edited, nodes, edges, DEFAULT_ACCESSORY_RULES);
+    const after = countAccessories(edited, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
 
-    // One extra panel-to-panel joint → +1 clampsPerStraightJoint worth of
-    // clamps, +dywidagPerRod rods, and the nuts follow the rods.
+    // One extra straight panel → +clampsPerStraightJoint clamps, and the
+    // extra seam it creates brings its rods and nuts with it.
     expect(after.straightClamps - before.straightClamps).toBe(
       DEFAULT_ACCESSORY_RULES.clampsPerStraightJoint
     );
@@ -162,21 +210,21 @@ describe("countAccessories — robustness under manual edit", () => {
     expect(after.nuts - before.nuts).toBe(
       DEFAULT_ACCESSORY_RULES.dywidagPerRod * DEFAULT_ACCESSORY_RULES.nutsPerDywidag
     );
-    // Struts and corner clamps unaffected — those don't depend on panel-level placements.
+    // Struts and corner clamps unaffected — those don't depend on straight panels.
     expect(after.struts).toBe(before.struts);
     expect(after.cornerClamps).toBe(before.cornerClamps);
   });
 
-  it("removing every inner placement zeroes clamps/rods/nuts but leaves corner clamps and struts", () => {
-    const { nodes, edges, placements } = buildGraphContext(rectangleWalls());
-    const stripped = placements.filter((p) => p.side !== "inner");
-    const count = countAccessories(stripped, nodes, edges, DEFAULT_ACCESSORY_RULES);
+  it("removing every inner placement zeroes rods/nuts but leaves struts", () => {
+    const ctx = buildGraphContext(rectangleWalls());
+    const stripped = ctx.placements.filter((p) => p.side !== "inner");
+    const count = countAccessories(stripped, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
 
-    expect(count.straightClamps).toBe(0);
     expect(count.dywidagRods).toBe(0);
     expect(count.nuts).toBe(0);
-    // Corners still exist as graph nodes; struts still needed on the walls.
-    expect(count.cornerClamps).toBe(12);
+    // Corner panels are inner-face only, so they go with them.
+    expect(count.cornerClamps).toBe(0);
+    // Struts still needed on the walls — they read from edges.
     expect(count.struts).toBe(10);
   });
 });

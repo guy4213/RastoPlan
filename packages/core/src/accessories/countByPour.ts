@@ -1,89 +1,68 @@
-import type { AccessoryRules, Edge, Node, Placement, Wall } from "../types.js";
+import type { AccessoryRules, Edge, Placement, Wall } from "../types.js";
 import type { AccessoryCount, CountByPour, PanelCount } from "./types.js";
 import { countPanels } from "./countPanels.js";
+import { collapsePlacementUnits } from "./units.js";
+import { classifyDywidagLength, dywidagRodsForJoint } from "./dywidag.js";
+import { straightJointsByEdge } from "./countAccessories.js";
 
 /**
  * Same accessory count as `countAccessories`, but split per `pourId`.
  * The customer's bill of quantities shows quantities separately per pour
  * plus a totals column, which is what this shape maps to.
  *
- * Attribution rules (flagged in the session summary):
- * - Straight clamps / Dywidag / nuts: attributed to the placement's own
- *   `pourId` (unambiguous — both sides of a joint share a wall).
- * - Struts: attributed to the edge's wall's pourId.
- * - Corner clamps: an L node can sit between edges belonging to different
- *   pours. We attribute the corner to the pour of the lowest-id incident
- *   edge (deterministic tiebreak). Multi-pour corners are unusual — pours
- *   are normally contiguous regions — but the attribution is documented so
- *   the accounting matches expectations.
- * - Crane adapters: project-scoped, not per pour. perPour value is 0 for
- *   every pour; `total.craneAdapters` holds the full project count.
+ * Attribution: every line item now derives from placements, and a placement
+ * carries its own `pourId`, so there are no heuristics left. A corner panel
+ * spanning two pours collapses to a single leg first (lowest placement id),
+ * which lands the unit in exactly one bucket — see units.ts.
+ * Crane adapters remain project-scoped: 0 per pour, full count in `total`.
  */
 export function countAccessoriesByPour(
   placements: Placement[],
-  nodes: Node[],
   edges: Edge[],
   walls: Wall[],
   rules: AccessoryRules
 ): CountByPour<AccessoryCount> {
   const wallToPour = new Map(walls.map((w) => [w.id, w.pourId]));
-  const edgeToPour = new Map<string, string>();
-  for (const edge of edges) {
-    const pour = wallToPour.get(edge.wallId);
-    if (pour) edgeToPour.set(edge.id, pour);
-  }
+  const wallById = new Map(walls.map((w) => [w.id, w]));
+  const edgeById = new Map(edges.map((e) => [e.id, e]));
 
-  const pourIds = new Set<string>(walls.map((w) => w.pourId));
   const byPour: Record<string, AccessoryCount> = {};
-  for (const pourId of pourIds) byPour[pourId] = emptyAccessoryCount();
+  for (const pourId of new Set(walls.map((w) => w.pourId))) {
+    byPour[pourId] = emptyAccessoryCount();
+  }
+  const bucketFor = (pourId: string): AccessoryCount | undefined => byPour[pourId];
 
-  // Corner clamps — attribute each L node to its lowest-id incident edge's pour.
-  for (const node of nodes) {
-    if (node.type !== "L") continue;
-    const incidentEdges = edges
-      .filter((e) => e.nodeA === node.id || e.nodeB === node.id)
-      .sort((a, b) => a.id.localeCompare(b.id));
-    const anchor = incidentEdges[0];
-    if (!anchor) continue;
-    const pourId = edgeToPour.get(anchor.id);
-    if (pourId && byPour[pourId]) {
-      byPour[pourId].cornerClamps += rules.cornerClampsPerCorner;
-    }
-  }
-
-  // Straight joints per pour — walked per-edge on the inner face only.
-  const jointsByPour = new Map<string, number>();
-  const jointsByEdge = new Map<string, Placement[]>();
-  for (const p of placements) {
-    if (p.side !== "inner") continue;
-    const arr = jointsByEdge.get(p.edgeId) ?? [];
-    arr.push(p);
-    jointsByEdge.set(p.edgeId, arr);
-  }
-  for (const arr of jointsByEdge.values()) {
-    arr.sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
-    for (let i = 0; i < arr.length - 1; i++) {
-      const a = arr[i]!;
-      const b = arr[i + 1]!;
-      if (a.offsetAlongEdge + a.width !== b.offsetAlongEdge) continue;
-      if (a.kind !== "panel" || b.kind !== "panel") continue;
-      jointsByPour.set(a.pourId, (jointsByPour.get(a.pourId) ?? 0) + 1);
-    }
-  }
-  for (const [pourId, joints] of jointsByPour) {
-    const bucket = byPour[pourId];
+  // Clamps follow the customer's BOM formulas: K30 per corner-panel unit,
+  // K10 per straight panel.
+  for (const p of collapsePlacementUnits(placements)) {
+    if (!p.panelType || p.flags.includes("outer-corner-protrusion")) continue;
+    const bucket = bucketFor(p.pourId);
     if (!bucket) continue;
-    bucket.straightClamps += joints * rules.clampsPerStraightJoint;
-    bucket.dywidagRods += joints * rules.dywidagPerRod;
-    bucket.nuts += joints * rules.dywidagPerRod * rules.nutsPerDywidag;
+    if (p.kind === "corner-panel") bucket.cornerClamps += rules.cornerClampsPerCorner;
+    else bucket.straightClamps += rules.clampsPerStraightJoint;
+  }
+
+  // Dywidag + nuts per edge, with the rod length set by that wall's thickness.
+  for (const [edgeId, joints] of straightJointsByEdge(placements)) {
+    const wallId = edgeById.get(edgeId)?.wallId;
+    if (!wallId) continue;
+    const bucket = bucketFor(wallToPour.get(wallId) ?? "");
+    if (!bucket) continue;
+
+    const rods = joints * dywidagRodsForJoint(rules);
+    const thickness = wallById.get(wallId)?.thickness ?? 0;
+    if (classifyDywidagLength(thickness, rules) === "long") bucket.dywidagRodsLong += rods;
+    else bucket.dywidagRodsStandard += rods;
+    bucket.dywidagRods += rods;
+    bucket.nuts += rods * rules.nutsPerDywidag;
   }
 
   // Struts per edge → per pour.
   for (const edge of edges) {
-    const pourId = edgeToPour.get(edge.id);
-    if (!pourId || !byPour[pourId]) continue;
+    const bucket = bucketFor(wallToPour.get(edge.wallId) ?? "");
+    if (!bucket) continue;
     if (rules.strutSpacingCm > 0) {
-      byPour[pourId].struts += Math.ceil(edge.clearLength / rules.strutSpacingCm);
+      bucket.struts += Math.ceil(edge.clearLength / rules.strutSpacingCm);
     }
   }
 
@@ -92,6 +71,8 @@ export function countAccessoriesByPour(
     total.cornerClamps += bucket.cornerClamps;
     total.straightClamps += bucket.straightClamps;
     total.dywidagRods += bucket.dywidagRods;
+    total.dywidagRodsStandard += bucket.dywidagRodsStandard;
+    total.dywidagRodsLong += bucket.dywidagRodsLong;
     total.nuts += bucket.nuts;
     total.struts += bucket.struts;
   }
@@ -115,8 +96,9 @@ export function countPanelsByPour(
   const byPour: Record<string, PanelCount> = {};
   for (const pourId of pourIds) byPour[pourId] = emptyPanelCount();
 
+  // Collapse first so a corner unit spanning two pours isn't counted twice.
   const grouped = new Map<string, Placement[]>();
-  for (const p of placements) {
+  for (const p of collapsePlacementUnits(placements)) {
     if (!byPour[p.pourId]) byPour[p.pourId] = emptyPanelCount();
     const arr = grouped.get(p.pourId) ?? [];
     arr.push(p);
@@ -143,6 +125,8 @@ function emptyAccessoryCount(): AccessoryCount {
     cornerClamps: 0,
     straightClamps: 0,
     dywidagRods: 0,
+    dywidagRodsStandard: 0,
+    dywidagRodsLong: 0,
     nuts: 0,
     struts: 0,
     craneAdapters: 0,

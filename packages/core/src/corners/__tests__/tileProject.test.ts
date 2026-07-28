@@ -24,10 +24,12 @@ function projectOf(walls: Wall[]): Project {
 function offsetsFor(placements: Placement[], edgeId: string, side: "inner" | "outer"): number[] {
   return placements
     .filter((p) => p.edgeId === edgeId && p.side === side)
-    // Exclude the outer-face protrusion strips — they're an outer-only
-    // artifact with no inner counterpart, so they'd falsely fail the
-    // "every inner joint has an outer joint" check.
+    // The sync invariant covers the STRAIGHT run only. Both corner artifacts
+    // are single-sided by design — the C30x30 exists on the inner face, the
+    // overlap strip on the outer — so including either would falsely fail
+    // the "every inner joint has an outer joint" check.
     .filter((p) => !p.flags.includes("outer-corner-protrusion"))
+    .filter((p) => p.kind !== "corner-panel")
     .map((p) => p.offsetAlongEdge)
     .sort((a, b) => a - b);
 }
@@ -52,6 +54,7 @@ describe("tileProject — Dywidag sync", () => {
     const byKey = new Map<string, { inner?: Placement; outer?: Placement }>();
     for (const p of placements) {
       if (p.flags.includes("outer-corner-protrusion")) continue;
+      if (p.kind === "corner-panel") continue;
       const key = `${p.edgeId}:${p.offsetAlongEdge}`;
       const slot = byKey.get(key) ?? {};
       slot[p.side] = p;
@@ -79,8 +82,11 @@ describe("tileProject — 10cm rule at outer corners", () => {
       expect(p.width).toBe(DEFAULT_ACCESSORY_RULES.outerCornerProtrusionCm);
       expect(p.kind).not.toBe("corner-panel");
     }
-    // No corner-panel placements anywhere on a box (all corners are convex).
-    expect(placements.filter((p) => p.kind === "corner-panel")).toHaveLength(0);
+    // The overlap is the OUTER half of the corner story; the inner half is a
+    // corner panel, present at these same convex corners.
+    const cornerLegs = placements.filter((p) => p.kind === "corner-panel");
+    expect(cornerLegs).toHaveLength(8);
+    expect(cornerLegs.every((p) => p.side === "inner")).toBe(true);
   });
 
   it("uses the configured outerCornerProtrusionCm, not a hard-coded 10", () => {
@@ -96,19 +102,20 @@ describe("tileProject — 10cm rule at outer corners", () => {
   });
 });
 
-describe("tileProject — inner corner", () => {
-  it("L-shape notch gets C30x30 corner panels on both meeting walls, on BOTH inner and outer face (synced)", () => {
+describe("tileProject — corner panels", () => {
+  it("L-shape: every corner gets a C30x30, inner face only, one leg per meeting wall", () => {
     const placements = tileProject(projectOf(lShapeWalls()));
     const cornerPanels = placements.filter((p) => p.kind === "corner-panel");
-    // 2 walls at the notch × 2 sides (inner + synced outer) = 4 placements.
-    expect(cornerPanels).toHaveLength(4);
-    expect(cornerPanels.every((p) => p.panelType === "C30x30")).toBe(true);
 
+    // 6 corners × 2 meeting walls = 12 legs, 6 physical panels.
+    expect(cornerPanels).toHaveLength(12);
+    expect(new Set(cornerPanels.map((p) => p.groupId)).size).toBe(6);
+    expect(cornerPanels.every((p) => p.panelType === "C30x30")).toBe(true);
+    expect(cornerPanels.every((p) => p.side === "inner")).toBe(true);
+
+    // The notch walls each carry a leg at both of their ends.
     for (const wallId of ["w3", "w4"]) {
-      const perWall = cornerPanels.filter((p) => p.edgeId === `edge:${wallId}`);
-      expect(perWall).toHaveLength(2);
-      expect(perWall.some((p) => p.side === "inner")).toBe(true);
-      expect(perWall.some((p) => p.side === "outer")).toBe(true);
+      expect(cornerPanels.filter((p) => p.edgeId === `edge:${wallId}`)).toHaveLength(2);
     }
   });
 });

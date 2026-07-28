@@ -1,9 +1,31 @@
 import { describe, expect, it } from "vitest";
+import type { PanelCatalog } from "../../types.js";
 import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
 import { selectPanels } from "../selectPanels.js";
 
 function widthsOf(panels: { width: number }[]): number[] {
   return panels.map((p) => p.width).sort((a, b) => b - a);
+}
+
+/**
+ * A deliberately sparse catalog. The full Shiluvit B catalog stocks every
+ * width from 20 to 90 in 5cm steps, which leaves almost no run unfillable and
+ * almost no tie for the priority order to break — so the cases below pin the
+ * ALGORITHM against a stock list narrow enough to have gaps and ties.
+ */
+function sparseCatalog(): PanelCatalog {
+  const widths = [75, 60, 55, 50, 40];
+  return {
+    panels: widths.map((width) => ({
+      type: `R${width}`,
+      width,
+      height: 300,
+      isLeading: width === 75,
+      inStock: true,
+      kind: "straight" as const,
+      bomLabel: `פנאל ${width}/300`,
+    })),
+  };
 }
 
 describe("selectPanels", () => {
@@ -32,18 +54,18 @@ describe("selectPanels", () => {
   });
 
   it("no valid combination: 42cm falls between every reachable gap, flags gap-out-of-range", () => {
-    const result = selectPanels(42, DEFAULT_PANEL_CATALOG, DEFAULT_ACCESSORY_RULES);
+    const result = selectPanels(42, sparseCatalog(), DEFAULT_ACCESSORY_RULES);
 
     expect(result.flags).toEqual(["gap-out-of-range"]);
     expect(result.panels).toHaveLength(0);
   });
 
   it("respects tilingPriority order: 270cm picks more leading panels by default, but the lowest gap when min-gap is prioritized first", () => {
-    const byLeadingFirst = selectPanels(270, DEFAULT_PANEL_CATALOG, DEFAULT_ACCESSORY_RULES);
+    const byLeadingFirst = selectPanels(270, sparseCatalog(), DEFAULT_ACCESSORY_RULES);
     expect(widthsOf(byLeadingFirst.panels)).toEqual([75, 75, 75, 40]);
     expect(byLeadingFirst.gap).toBe(5);
 
-    const byGapFirst = selectPanels(270, DEFAULT_PANEL_CATALOG, {
+    const byGapFirst = selectPanels(270, sparseCatalog(), {
       ...DEFAULT_ACCESSORY_RULES,
       tilingPriority: ["min-gap", "leading", "min-panels"],
     });

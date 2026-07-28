@@ -25,7 +25,6 @@ describe("countAccessoriesByPour — single-pour project", () => {
     );
     const byPour = countAccessoriesByPour(
       placements,
-      classified,
       corners.edges,
       walls,
       DEFAULT_ACCESSORY_RULES
@@ -63,7 +62,6 @@ describe("countAccessoriesByPour — two-pour project", () => {
     );
     const byPour = countAccessoriesByPour(
       placements,
-      classified,
       corners.edges,
       walls,
       DEFAULT_ACCESSORY_RULES
@@ -71,11 +69,11 @@ describe("countAccessoriesByPour — two-pour project", () => {
 
     expect(byPour.byPour["pour-A"]).toBeDefined();
     expect(byPour.byPour["pour-B"]).toBeDefined();
-    // Both pours own two 200cm walls: ceil(200/150) = 2 struts per wall,
-    // so each pour has 4 struts — 8 total.
-    expect(byPour.byPour["pour-A"]?.struts).toBe(4);
-    expect(byPour.byPour["pour-B"]?.struts).toBe(4);
-    expect(byPour.total.struts).toBe(8);
+    // Both pours own two 200cm walls, each losing a 30cm corner-panel leg at
+    // both ends: ceil(140/150) = 1 strut per wall, so 2 per pour — 4 total.
+    expect(byPour.byPour["pour-A"]?.struts).toBe(2);
+    expect(byPour.byPour["pour-B"]?.struts).toBe(2);
+    expect(byPour.total.struts).toBe(4);
   });
 
   it("byPour.cornerClamps + byPour.straightClamps + byPour.struts sum to project totals", () => {
@@ -93,7 +91,6 @@ describe("countAccessoriesByPour — two-pour project", () => {
     );
     const byPour = countAccessoriesByPour(
       placements,
-      classified,
       corners.edges,
       walls,
       DEFAULT_ACCESSORY_RULES

@@ -3,7 +3,15 @@ import type { Panel } from "../../types.js";
 import { arrangePanels } from "../arrangePanels.js";
 
 function panel(width: number, type = `R${width}`): Panel {
-  return { type, width, height: 300, isLeading: width === 75, inStock: true, kind: "straight" };
+  return {
+    type,
+    width,
+    height: 300,
+    isLeading: width === 75,
+    inStock: true,
+    kind: "straight",
+    bomLabel: `פנאל ${width}/300`,
+  };
 }
 
 describe("arrangePanels", () => {

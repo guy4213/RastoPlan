@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import {
+  ACCESSORY_ITEMS,
   buildGraph,
   classifyCornerSides,
   classifyNodes,
@@ -35,7 +36,6 @@ export function QuantitiesPanel() {
     const graph = computeGraph(project);
     const accessories = countAccessoriesByPour(
       project.placements,
-      graph.nodes,
       graph.edges,
       project.walls,
       project.rules
@@ -101,10 +101,12 @@ interface Row<K> {
 }
 
 const ACCESSORY_ROWS: Row<keyof AccessoryCount>[] = [
-  { key: "cornerClamps", label: "קלמרות פינה" },
-  { key: "straightClamps", label: "קלמרות ישרות" },
+  { key: "cornerClamps", label: `קלמרות פינה (${ACCESSORY_ITEMS.cornerClamp.code})` },
+  { key: "straightClamps", label: `קלמרות ישרות (${ACCESSORY_ITEMS.straightClamp.code})` },
   { key: "dywidagRods", label: "Dywidag" },
-  { key: "nuts", label: "אומים S120" },
+  { key: "dywidagRodsStandard", label: "‏— מוט 1 מ׳" },
+  { key: "dywidagRodsLong", label: "‏— מוט ארוך (עובי > 30)" },
+  { key: "nuts", label: `אומים ${ACCESSORY_ITEMS.nut.code}` },
   { key: "struts", label: "רגלי תמיכה + הליכון" },
   { key: "craneAdapters", label: "מתאמי מנוף" },
 ];
@@ -201,7 +203,16 @@ function PanelTable({
 }
 
 function emptyAccessory(): AccessoryCount {
-  return { cornerClamps: 0, straightClamps: 0, dywidagRods: 0, nuts: 0, struts: 0, craneAdapters: 0 };
+  return {
+    cornerClamps: 0,
+    straightClamps: 0,
+    dywidagRods: 0,
+    dywidagRodsStandard: 0,
+    dywidagRodsLong: 0,
+    nuts: 0,
+    struts: 0,
+    craneAdapters: 0,
+  };
 }
 
 const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 12 };

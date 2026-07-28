@@ -4,12 +4,16 @@
  * total centimeters of on-site-cut timber.
  */
 export interface AccessoryCount {
-  /** cornerClampsPerCorner × number of L corners in the graph. */
+  /** K30. cornerClampsPerCorner × number of physical corner-panel units. */
   cornerClamps: number;
-  /** clampsPerStraightJoint × number of panel-to-panel joints on the inner face. */
+  /** K10. clampsPerStraightJoint × number of straight panels. */
   straightClamps: number;
   /** dywidagPerRod × number of tie points (currently: one tie point per straight joint). */
   dywidagRods: number;
+  /** Part of dywidagRods on walls up to dywidagStandardMaxThicknessCm — the standard 1m rod. */
+  dywidagRodsStandard: number;
+  /** Part of dywidagRods on thicker walls, which need a longer rod (exact length TBD with the customer). */
+  dywidagRodsLong: number;
   /** nutsPerDywidag × dywidagRods. */
   nuts: number;
   /** Sum over edges of ceil(clearLength / strutSpacingCm) — inner side only. */

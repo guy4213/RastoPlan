@@ -1,52 +1,47 @@
 import type { AccessoryRules, Edge, Node, PanelCatalog, Placement, Wall } from "../types.js";
+import { otherWallThicknessAt } from "../geometry/neighborThickness.js";
+import { outerCornerProtrusionFor } from "./outerCornerProtrusion.js";
 
 export interface PlaceCornerPanelsResult {
   /**
-   * C30x30 placements at concave ('inner') L corners, INNER face only.
-   * The outer-face copies are produced later by syncOuterPlacements — this
-   * keeps the Dywidag invariant that inner and outer share offsets exactly.
-   * (Design note flagged in the session summary: at a concave inner corner
-   * the outer face is convex from outside, so a domain expert may later
-   * choose to swap these outer-side copies for straight+protrusion instead.
-   * That would break inner/outer offset sync at the corner and must be an
-   * explicit tradeoff, not a silent one.)
+   * C30x30 placements at EVERY L corner, INNER face only.
+   *
+   * One physical corner panel wraps the corner, so it emits one leg on each
+   * meeting wall; both legs carry the same `groupId` and must be counted once
+   * (its BOM area, 1.8m², is both legs together). The outer face gets straight
+   * panels plus an overlap instead — never a corner panel — which is why these
+   * are deliberately not fed to syncOuterPlacements.
    */
   innerCornerPanels: Placement[];
   /**
-   * 10cm protrusion strips at convex ('outer') L corners, OUTER face only.
-   * These have no inner-face counterpart — the inner face terminates
-   * cleanly at the corner node while the outer face wraps past it. Emitted
-   * once per (edge, outer-corner end); the two meeting walls therefore both
-   * carry one, and picking which physical panel actually wraps is a
-   * downstream drafting choice.
+   * Overlap strips at convex ('outer') L corners, OUTER face only, width per
+   * `outerCornerProtrusionFor` (neighbour-thickness dependent). Emitted once
+   * per (edge, outer-corner end); the two meeting walls therefore both carry
+   * one, and picking which physical panel actually wraps is a downstream
+   * drafting choice.
    */
   outerCornerProtrusions: Placement[];
   /**
    * Edges with clearLength recomputed for the real corner-consumption rules
-   * (30cm off each inner-corner side, 0cm off each outer-corner side —
-   * replacing computeClearLengths's neighbor-thickness placeholder), and
-   * with T/cross/unresolved-corner-side flags carried through.
+   * (one corner-panel leg off each L-corner end, replacing computeClearLengths's
+   * neighbor-thickness placeholder), and with T/cross/unresolved flags carried
+   * through.
    */
   edges: Edge[];
 }
 
 /**
  * Places the corner-adjacent formwork per the corners layer's rules:
- * - inner (concave) L corner: C30x30 corner panel on each meeting wall's
- *   inner face; the outer face is handled later by sync.
- * - outer (convex) L corner: no corner panel; the outer face gets a 10cm
- *   protrusion strip on each meeting wall (rules.outerCornerProtrusionCm),
- *   and the inner-face straight tiling runs the full inner-line length.
+ * - every L corner: a corner panel (C30x30) on the inner face, because the
+ *   inner formwork folds around the corner. Both concave and convex corners —
+ *   they are not alternatives, which is what the customer corrected.
+ * - convex ('outer') L corner additionally: on the outer face two straight
+ *   panels meet with an overlap, so an overlap strip is emitted there.
  *
- * Also emits an adjusted Edge[] whose clearLength reflects the corner
- * deductions actually used here — replacing the placeholder deduction from
- * computeClearLengths (which pessimistically subtracted the neighbor's
- * thickness at outer corners to prevent overlap).
- *
- * `offsetAlongEdge` on every returned Placement is expressed in the
- * clear-run frame (same frame tileWall uses): 0 to clearLength is the
- * tileable straight run, and corner-adjacent placements sit at negative
- * offsets or offsets ≥ clearLength — i.e., outside the clear run.
+ * `offsetAlongEdge` on every returned Placement is expressed in the clear-run
+ * frame (same frame tileWall uses): 0 to clearLength is the tileable straight
+ * run, and corner-adjacent placements sit at negative offsets or offsets
+ * ≥ clearLength — i.e., outside the clear run.
  */
 export function placeCornerPanels(
   nodes: Node[],
@@ -58,10 +53,9 @@ export function placeCornerPanels(
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
   const wallById = new Map(walls.map((w) => [w.id, w]));
 
-  const cornerPanel = catalog.panels.find((p) => p.kind === "corner" && p.inStock);
+  const cornerPanel = pickCornerPanel(catalog);
   const cornerPanelWidth = cornerPanel?.width ?? 30;
   const cornerPanelType = cornerPanel?.type ?? "C30x30";
-  const protrusion = rules.outerCornerProtrusionCm;
 
   const innerCornerPanels: Placement[] = [];
   const outerCornerProtrusions: Placement[] = [];
@@ -82,8 +76,10 @@ export function placeCornerPanels(
     for (const node of [nodeA, nodeB]) {
       if (!node) continue;
       if (node.type === "L") {
-        if (node.cornerSide === "inner") deduction += cornerPanelWidth;
-        else if (node.cornerSide !== "outer") flags.push("unresolved-corner-side");
+        deduction += cornerPanelWidth;
+        if (node.cornerSide !== "inner" && node.cornerSide !== "outer") {
+          flags.push("unresolved-corner-side");
+        }
       } else if (node.type === "T") flags.push("unresolved-T");
       else if (node.type === "cross") flags.push("unresolved-cross");
     }
@@ -93,57 +89,41 @@ export function placeCornerPanels(
     // Now that clearLength is known, emit corner-adjacent placements in the
     // clear-run frame (offsets < 0 or ≥ clearLength sit outside the run).
     const pourId = wall.pourId;
-    if (nodeA?.type === "L" && nodeA.cornerSide === "inner") {
+    for (const [node, end] of [
+      [nodeA, "A"],
+      [nodeB, "B"],
+    ] as const) {
+      if (node?.type !== "L") continue;
+
       innerCornerPanels.push({
-        id: `placement:${edge.id}:corner:A`,
+        id: `placement:${edge.id}:corner:${end}`,
+        // Both legs of one physical corner panel share the corner node.
+        groupId: `corner:${node.id}`,
         edgeId: edge.id,
         pourId,
         side: "inner",
         kind: "corner-panel",
         panelType: cornerPanelType,
-        offsetAlongEdge: -cornerPanelWidth,
+        offsetAlongEdge: end === "A" ? -cornerPanelWidth : clearLength,
         width: cornerPanelWidth,
         source: "auto",
         flags: [],
       });
-    }
-    if (nodeB?.type === "L" && nodeB.cornerSide === "inner") {
-      innerCornerPanels.push({
-        id: `placement:${edge.id}:corner:B`,
-        edgeId: edge.id,
-        pourId,
-        side: "inner",
-        kind: "corner-panel",
-        panelType: cornerPanelType,
-        offsetAlongEdge: clearLength,
-        width: cornerPanelWidth,
-        source: "auto",
-        flags: [],
-      });
-    }
-    if (nodeA?.type === "L" && nodeA.cornerSide === "outer") {
+
+      if (node.cornerSide !== "outer") continue;
+
+      const protrusion = outerCornerProtrusionFor(
+        otherWallThicknessAt(node.id, edge, edges, wallById),
+        rules
+      );
       outerCornerProtrusions.push({
-        id: `placement:${edge.id}:protrusion:A`,
+        id: `placement:${edge.id}:protrusion:${end}`,
         edgeId: edge.id,
         pourId,
         side: "outer",
         kind: "panel",
         panelType: "",
-        offsetAlongEdge: -protrusion,
-        width: protrusion,
-        source: "auto",
-        flags: ["outer-corner-protrusion"],
-      });
-    }
-    if (nodeB?.type === "L" && nodeB.cornerSide === "outer") {
-      outerCornerProtrusions.push({
-        id: `placement:${edge.id}:protrusion:B`,
-        edgeId: edge.id,
-        pourId,
-        side: "outer",
-        kind: "panel",
-        panelType: "",
-        offsetAlongEdge: clearLength,
+        offsetAlongEdge: end === "A" ? -protrusion : clearLength,
         width: protrusion,
         source: "auto",
         flags: ["outer-corner-protrusion"],
@@ -154,4 +134,14 @@ export function placeCornerPanels(
   });
 
   return { innerCornerPanels, outerCornerProtrusions, edges: adjustedEdges };
+}
+
+/**
+ * The catalog stocks corner panels in several leg sizes (15/20/25/30). Auto
+ * layout uses the customer's leading one; taking the first in-stock match
+ * would silently pick C15x15 just because it sorts first.
+ */
+function pickCornerPanel(catalog: PanelCatalog) {
+  const corners = catalog.panels.filter((p) => p.kind === "corner" && p.inStock);
+  return corners.find((p) => p.isLeading) ?? corners[0];
 }

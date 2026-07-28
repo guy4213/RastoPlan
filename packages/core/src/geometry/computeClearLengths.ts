@@ -1,4 +1,5 @@
 import type { Edge, Node, Wall } from "../types.js";
+import { otherWallThicknessAt } from "./neighborThickness.js";
 
 export interface ComputeClearLengthsOptions {
   /** width in cm consumed from each edge entering an inner (concave) L corner — the corner panel's leg length (DEFAULT_PANEL_CATALOG's C30x30 -> 30). */
@@ -58,17 +59,4 @@ export function computeClearLengths(
       flags,
     };
   });
-}
-
-function otherWallThicknessAt(
-  nodeId: string,
-  edge: Edge,
-  edges: Edge[],
-  wallById: Map<string, Wall>
-): number {
-  const otherEdge = edges.find(
-    (e) => e.id !== edge.id && (e.nodeA === nodeId || e.nodeB === nodeId)
-  );
-  const otherWall = otherEdge ? wallById.get(otherEdge.wallId) : undefined;
-  return otherWall?.thickness ?? 0;
 }

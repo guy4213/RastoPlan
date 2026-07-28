@@ -23,6 +23,21 @@ export function rectangleWalls(): Wall[] {
 }
 
 /**
+ * The customer's calibration model: the same 400x300 box, but the bottom wall
+ * is 30cm thick and the other three are 20cm. Built to show the outer-corner
+ * overlap reacting to the NEIGHBOUR's thickness — the two corners touching the
+ * bottom wall behave differently from the two that don't.
+ */
+export function rectangleWallsMixedThickness(): Wall[] {
+  return [
+    makeWall("bottom", { x: 0, y: 0 }, { x: 400, y: 0 }, 30),
+    makeWall("right", { x: 400, y: 0 }, { x: 400, y: 300 }, 20),
+    makeWall("top", { x: 400, y: 300 }, { x: 0, y: 300 }, 20),
+    makeWall("left", { x: 0, y: 300 }, { x: 0, y: 0 }, 20),
+  ];
+}
+
+/**
  * Same rectangle, but the bottom/right corner is deliberately off by ~1.1cm
  * (within the 2cm snap tolerance) to prove buildGraph actually snaps rather
  * than relying on exact coordinate equality.
