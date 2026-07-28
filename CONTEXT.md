@@ -147,6 +147,14 @@ pnpm typecheck
 Each milestone is done only when it meets its Definition of Done from the
 spec — not "roughly working."
 
+## Open engineering questions
+
+`docs/open-questions.md` tracks every rule the engine could not derive from
+the customer's own sources, with the evidence (formulas pulled out of their
+real BOM sheets) next to each one. Read it before changing an accessory
+formula — several plausible-looking numbers are deliberately NOT implemented
+because the sources disagree.
+
 ## When something isn't covered by the spec
 
 Stop and flag it rather than guessing — especially for architectural
