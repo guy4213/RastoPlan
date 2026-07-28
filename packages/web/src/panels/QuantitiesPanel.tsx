@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
   ACCESSORY_ITEMS,
+  buildBomTemplate,
   buildGraph,
   classifyCornerSides,
   classifyNodes,
@@ -11,6 +12,7 @@ import {
   type PanelCount,
 } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
+import { downloadBomXlsx } from "../export/writeBomXlsx.js";
 
 /** Runs the graph pipeline just far enough to feed the accessory counter. */
 function computeGraph(project: ReturnType<typeof useProject>["state"]["project"]) {
@@ -48,6 +50,23 @@ export function QuantitiesPanel() {
 
   const hasPlacements = project.placements.length > 0;
 
+  async function exportBom() {
+    const template = buildBomTemplate({
+      header: {
+        companyName: "",
+        projectName: project.name,
+        note: "קומה טיפוסית",
+        date: new Date().toLocaleDateString("he-IL"),
+      },
+      catalog: project.catalog,
+      pourIds: totalPourIds,
+      pourNames: totalPourIds.map((id) => pourNames.get(id) ?? id),
+      panels,
+      accessories,
+    });
+    await downloadBomXlsx(template, `חישוב כמויות — ${project.name}`);
+  }
+
   return (
     <aside style={{ overflow: "auto", direction: "rtl" }}>
       <div style={{ padding: 12, borderBottom: "1px solid #e2e8f0" }}>
@@ -55,6 +74,11 @@ export function QuantitiesPanel() {
         <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>
           מתעדכן חי לכל שינוי בקנבס. כשאין פריסה עדיין — הרץ "חשב".
         </p>
+        {hasPlacements && (
+          <button type="button" onClick={exportBom} style={exportButtonStyle}>
+            ייצוא BOM לאקסל
+          </button>
+        )}
       </div>
 
       {!hasPlacements && (
@@ -214,6 +238,19 @@ function emptyAccessory(): AccessoryCount {
     craneAdapters: 0,
   };
 }
+
+const exportButtonStyle: React.CSSProperties = {
+  marginTop: 8,
+  width: "100%",
+  padding: "6px 10px",
+  fontSize: 12,
+  fontWeight: 600,
+  color: "#0f172a",
+  background: "#f1f5f9",
+  border: "1px solid #cbd5e1",
+  borderRadius: 4,
+  cursor: "pointer",
+};
 
 const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 12 };
 const thStyle: React.CSSProperties = { padding: "4px 8px", textAlign: "center", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontWeight: 600 };
