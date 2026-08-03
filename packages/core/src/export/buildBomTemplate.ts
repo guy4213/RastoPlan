@@ -1,6 +1,6 @@
 import type { Panel, PanelCatalog } from "../types.js";
 import type { AccessoryCount, CountByPour, PanelCount } from "../accessories/types.js";
-import { ACCESSORY_ITEMS } from "../defaults.js";
+import { ACCESSORY_ITEMS, BOM_CORNER_PANEL_LEGS, STRAIGHT_PANEL_WIDTHS } from "../defaults.js";
 
 /** Header block above the product table, rows 1-5 of the customer's sheet. */
 export interface BomHeader {
@@ -50,10 +50,9 @@ const TABLE_HEADERS = [
   'סה"כ מר ',
 ];
 
-/** Straight widths that get a row, whether or not the project uses them. */
-const BOM_STRAIGHT_WIDTHS = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90];
-/** Corner legs that get a row. */
-const BOM_CORNER_LEGS = [20, 25, 30];
+// Which straight widths and corner-leg sizes get a row here comes from the
+// catalog definitions in defaults.ts — see STRAIGHT_PANEL_WIDTHS and
+// BOM_CORNER_PANEL_LEGS. Duplicating them locally used to drift silently.
 
 /**
  * Builds the customer's bill of materials in the exact shape of the sheets
@@ -111,8 +110,8 @@ export function buildBomTemplate(input: BuildBomTemplateInput): BomTemplate {
   });
 
   const panelRows = [
-    ...BOM_STRAIGHT_WIDTHS.map((w) => panelRow(`פנאל ${w}/300`, (w / 100) * 3)),
-    ...BOM_CORNER_LEGS.map((leg) => panelRow(`פנאל ${leg}/${leg}/300`, ((leg * 2) / 100) * 3)),
+    ...STRAIGHT_PANEL_WIDTHS.map((w) => panelRow(`פנאל ${w}/300`, (w / 100) * 3)),
+    ...BOM_CORNER_PANEL_LEGS.map((leg) => panelRow(`פנאל ${leg}/${leg}/300`, ((leg * 2) / 100) * 3)),
   ];
 
   const rows: BomRow[] = [

@@ -48,6 +48,12 @@ export async function downloadBomXlsx(template: BomTemplate, fileName: string): 
   const link = document.createElement("a");
   link.href = url;
   link.download = fileName.endsWith(".xlsx") ? fileName : `${fileName}.xlsx`;
+  // Attach to the DOM before clicking — Firefox ignores clicks on detached
+  // anchors — and defer the revoke so browsers that dispatch the download
+  // asynchronously (Safari, some Chromium versions on Windows) have time to
+  // read the blob URL before it's torn down.
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(link);
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }

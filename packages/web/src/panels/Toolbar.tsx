@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Point } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
+import { ProjectsModal } from "./ProjectsModal.js";
 
 interface FreeEndpoint {
   wallId: string;
@@ -34,6 +35,7 @@ export function Toolbar() {
   const { state, dispatch } = useProject();
   const { tool, layoutDirty, activePourId, units } = state.ui;
   const [notice, setNotice] = useState<string | null>(null);
+  const [projectsOpen, setProjectsOpen] = useState(false);
 
   const showNotice = (msg: string) => {
     setNotice(msg);
@@ -76,6 +78,14 @@ export function Toolbar() {
         background: "#fff",
       }}
     >
+      <button
+        type="button"
+        onClick={() => setProjectsOpen(true)}
+        style={projectsButton}
+        title="פרויקטים"
+      >
+        📁 פרויקטים
+      </button>
       <input
         type="text"
         value={state.project.name}
@@ -165,6 +175,7 @@ export function Toolbar() {
           חשב
         </button>
       </div>
+      <ProjectsModal open={projectsOpen} onClose={() => setProjectsOpen(false)} />
     </header>
   );
 }
@@ -244,6 +255,17 @@ const secondaryButton: React.CSSProperties = {
   background: "#eff6ff",
   color: "#1e40af",
   border: "1px solid #bfdbfe",
+  borderRadius: 4,
+  fontFamily: "inherit",
+  fontSize: 13,
+  cursor: "pointer",
+};
+
+const projectsButton: React.CSSProperties = {
+  padding: "6px 12px",
+  background: "#f8fafc",
+  color: "#0f172a",
+  border: "1px solid #cbd5e1",
   borderRadius: 4,
   fontFamily: "inherit",
   fontSize: 13,

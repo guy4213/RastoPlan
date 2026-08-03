@@ -42,7 +42,17 @@ export const ACCESSORY_ITEMS = {
   nutAlt: { code: "70S", label: "אומים 70S" },
 } as const;
 
-const STRAIGHT_WIDTHS = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90];
+/**
+ * The Shiluvit B straight-panel widths, in cm. Single source of truth for the
+ * default catalog AND the BOM export — the customer's Priority sheet has a
+ * fixed row per width, so buildBomTemplate reads this list directly.
+ */
+export const STRAIGHT_PANEL_WIDTHS = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90] as const;
+
+/** Corner-panel leg sizes (cm) that get a fixed row in the customer's BOM. */
+export const BOM_CORNER_PANEL_LEGS = [20, 25, 30] as const;
+
+const STRAIGHT_WIDTHS = STRAIGHT_PANEL_WIDTHS;
 
 function straightPanel(width: number): Panel {
   return {

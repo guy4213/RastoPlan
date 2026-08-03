@@ -6,9 +6,11 @@ import { SelectionPanel } from "./panels/SelectionPanel.js";
 import { WallPanel } from "./panels/WallPanel.js";
 import { QuantitiesPanel } from "./panels/QuantitiesPanel.js";
 import { Legend } from "./panels/Legend.js";
+import { ToastProvider } from "./ui/Toast.js";
 
 export function App() {
   return (
+    <ToastProvider>
     <ProjectProvider>
       <div
         dir="rtl"
@@ -50,5 +52,6 @@ export function App() {
         </aside>
       </div>
     </ProjectProvider>
+    </ToastProvider>
   );
 }

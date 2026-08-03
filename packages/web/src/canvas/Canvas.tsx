@@ -6,6 +6,7 @@ import { useProject } from "../state/ProjectContext.js";
 import { Grid } from "./Grid.js";
 import { Walls } from "./Walls.js";
 import { Placements } from "./Placements.js";
+import { CornerClamps } from "./CornerClamps.js";
 import { WeldOverlay } from "./WeldOverlay.js";
 import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, formatLength, snapEndpoint } from "./geometry.js";
 
@@ -83,7 +84,7 @@ export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const size = useSize(containerRef);
   const { view, tool, selectedWallId, selectedWallIds, selectedPlacementId, units } = state.ui;
-  const { walls, pours, placements } = state.project;
+  const { walls, pours, placements, rules } = state.project;
 
   const [drawStart, setDrawStart] = useState<Point | null>(null);
   const [drawEnd, setDrawEnd] = useState<Point | null>(null);
@@ -414,6 +415,12 @@ export function Canvas() {
             onContextMenu={(id, x, y) =>
               setContextMenu({ kind: "placement", placementId: id, screenX: x, screenY: y })
             }
+          />
+          <CornerClamps
+            walls={walls}
+            placements={placements}
+            rules={rules}
+            scale={view.scale}
           />
           {marquee && (() => {
             const r = normalizeRect(marquee);

@@ -10,11 +10,44 @@ export function Legend() {
         <Swatch fill="#fde68a" stroke="#a16207" label="פער עץ" />
         <Swatch fill="#fef3c7" stroke="#b45309" label="עריכה ידנית" />
         <Swatch fill="#fecaca" stroke="#b91c1c" label="דגל / דורש טיפול" />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            style={{
+              display: "inline-flex",
+              width: 20,
+              height: 12,
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+              flexShrink: 0,
+            }}
+          >
+            <Dot />
+            <Dot />
+            <Dot />
+          </span>
+          <span>קלמרות K30 בפינה</span>
+        </div>
       </div>
       <p style={{ margin: "8px 0 0 0", color: "#64748b", fontSize: 11, lineHeight: 1.5 }}>
         גלגלת עכבר: זום · גרירה: פאן (במצב "בחירה") · Delete: מחיקה
       </p>
     </section>
+  );
+}
+
+function Dot() {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        width: 5,
+        height: 5,
+        borderRadius: "50%",
+        background: "#ea580c",
+        border: "1px solid #7c2d12",
+      }}
+    />
   );
 }
 
