@@ -3,7 +3,7 @@ import { Circle, Group, Line, Text } from "react-konva";
 import type Konva from "konva";
 import type { Point, Pour, Wall } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
-import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, formatLength, snapEndpoint, wallNormal } from "./geometry.js";
+import { ENDPOINT_SNAP_PIXELS, applyAxisLock, findEndpointSnapTarget, formatLength, snapEndpoint, wallNormal } from "./geometry.js";
 
 interface Props {
   walls: Wall[];
@@ -54,7 +54,7 @@ export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, on
           // Endpoint-snap the whole-wall translation to nearby corners of
           // other walls (so the moved wall lands cleanly on an existing
           // junction if the user releases near one).
-          const snappedA = snapEndpoint(newA, otherWalls, null, ENDPOINT_SNAP_PIXELS / scale);
+          const snappedA = snapEndpoint(newA, otherWalls, ENDPOINT_SNAP_PIXELS / scale);
           const deltaAfterSnapA = { x: snappedA.x - newA.x, y: snappedA.y - newA.y };
           const finalA = snappedA;
           const finalB = { x: newB.x + deltaAfterSnapA.x, y: newB.y + deltaAfterSnapA.y };
@@ -232,20 +232,22 @@ function EndpointHandle({
         strokeWidth={1.5 / scale}
         draggable
         onDragMove={(e) => {
-          // Snap the endpoint during drag so the user sees where it will
-          // land — right-angle snap uses the other endpoint as origin, and
-          // corner snap picks up nearby endpoints from other walls.
+          // Endpoint snap picks up nearby corners of other walls; Shift
+          // additionally locks the drag to the wall's dominant axis using
+          // the opposite endpoint as origin (the CAD "ortho" convention).
           const raw: Point = { x: e.target.x(), y: e.target.y() };
-          const snapped = snapEndpoint(raw, otherWalls, otherEndpoint, snapCm);
-          e.target.x(snapped.x);
-          e.target.y(snapped.y);
+          const snapped = snapEndpoint(raw, otherWalls, snapCm);
+          const locked = applyAxisLock(otherEndpoint, snapped, e.evt.shiftKey);
+          e.target.x(locked.x);
+          e.target.y(locked.y);
           setSnapTarget(findEndpointSnapTarget(raw, otherWalls, snapCm));
         }}
         onDragEnd={(e) => {
           const raw: Point = { x: e.target.x(), y: e.target.y() };
-          const snapped = snapEndpoint(raw, otherWalls, otherEndpoint, snapCm);
+          const snapped = snapEndpoint(raw, otherWalls, snapCm);
+          const locked = applyAxisLock(otherEndpoint, snapped, e.evt.shiftKey);
           setSnapTarget(null);
-          onCommit({ x: Math.round(snapped.x), y: Math.round(snapped.y) });
+          onCommit({ x: Math.round(locked.x), y: Math.round(locked.y) });
         }}
         onMouseEnter={(e) => {
           const stage = e.target.getStage();

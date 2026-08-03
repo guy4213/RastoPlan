@@ -8,23 +8,10 @@ import { Walls } from "./Walls.js";
 import { Placements } from "./Placements.js";
 import { CornerClamps } from "./CornerClamps.js";
 import { WeldOverlay } from "./WeldOverlay.js";
-import { ENDPOINT_SNAP_PIXELS, findEndpointSnapTarget, formatLength, snapEndpoint } from "./geometry.js";
+import { ENDPOINT_SNAP_PIXELS, applyAxisLock, findEndpointSnapTarget, formatLength, snapEndpoint } from "./geometry.js";
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 5;
-
-/**
- * If Shift is held, collapse the drag to the dominant axis so the wall is
- * strictly horizontal or vertical relative to the start point — the CAD
- * "ortho" lock users expect. Passthrough otherwise.
- */
-function applyAxisLock(start: Point, end: Point, shiftKey: boolean): Point {
-  if (!shiftKey) return end;
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  if (Math.abs(dx) >= Math.abs(dy)) return { x: end.x, y: start.y };
-  return { x: start.x, y: end.y };
-}
 
 interface MarqueeRect { x0: number; y0: number; x1: number; y1: number }
 
@@ -92,6 +79,10 @@ export function Canvas() {
   // placed, waiting for a second click to commit; 'idle' otherwise.
   const [drawMode, setDrawMode] = useState<"idle" | "dragging" | "awaiting-second">("idle");
   const mouseDownPixelRef = useRef<{ x: number; y: number } | null>(null);
+  // Latest raw (un-axis-locked) mouse world position while drawing. Kept so
+  // pressing/releasing Shift can re-apply the lock instantly, without
+  // waiting for the next mousemove event.
+  const rawDrawEndRef = useRef<Point | null>(null);
   type ContextMenuState =
     | { screenX: number; screenY: number; kind: "wall"; wallId: string }
     | { screenX: number; screenY: number; kind: "placement"; placementId: string };
@@ -154,6 +145,7 @@ export function Canvas() {
     setDrawMode("idle");
     setSnapHint(null);
     mouseDownPixelRef.current = null;
+    rawDrawEndRef.current = null;
   }, []);
 
   const handleMouseDown = useCallback(
@@ -182,15 +174,16 @@ export function Canvas() {
 
       // Second click of a click-click draw commits the wall.
       if (drawMode === "awaiting-second" && drawStart) {
-        const end = applyAxisLock(drawStart, snapEndpoint(world, walls, drawStart, snapCm), e.evt.shiftKey);
+        const end = applyAxisLock(drawStart, snapEndpoint(world, walls, snapCm), e.evt.shiftKey);
         commitWall(drawStart, end);
         cancelDraw();
         return;
       }
 
-      const snapped = snapEndpoint(world, walls, null, snapCm);
+      const snapped = snapEndpoint(world, walls, snapCm);
       setDrawStart(snapped);
       setDrawEnd(snapped);
+      rawDrawEndRef.current = snapped;
       setDrawMode("dragging");
       setSnapHint(findEndpointSnapTarget(world, walls, snapCm));
       mouseDownPixelRef.current = { x: pointer.x, y: pointer.y };
@@ -212,7 +205,8 @@ export function Canvas() {
 
       if (tool !== "draw-wall" || !drawStart) return;
       const world = stageToWorld(pointer.x, pointer.y);
-      const snapped = snapEndpoint(world, walls, drawStart, snapCm);
+      const snapped = snapEndpoint(world, walls, snapCm);
+      rawDrawEndRef.current = snapped;
       setDrawEnd(applyAxisLock(drawStart, snapped, e.evt.shiftKey));
       setSnapHint(findEndpointSnapTarget(world, walls, snapCm));
     },
@@ -288,6 +282,26 @@ export function Canvas() {
     },
     [tool, drawStart, drawMode, cancelDraw, marquee]
   );
+
+  // Shift toggles the axis lock instantly, without waiting for the next
+  // mousemove — otherwise "press Shift" only takes effect after the user
+  // jiggles the cursor, which feels broken on CAD tools they know.
+  useEffect(() => {
+    if (tool !== "draw-wall") return;
+    if (!drawStart) return;
+    const onShift = (e: KeyboardEvent) => {
+      if (e.key !== "Shift") return;
+      const raw = rawDrawEndRef.current;
+      if (!raw) return;
+      setDrawEnd(applyAxisLock(drawStart, raw, e.type === "keydown"));
+    };
+    window.addEventListener("keydown", onShift);
+    window.addEventListener("keyup", onShift);
+    return () => {
+      window.removeEventListener("keydown", onShift);
+      window.removeEventListener("keyup", onShift);
+    };
+  }, [tool, drawStart]);
 
   // Keyboard: tool switch (V/D/W), Delete selection, Escape cancels.
   // Skip when the user is typing into a form field so the shortcuts

@@ -1,5 +1,19 @@
 import type { Point, Wall } from "@rastoplan/core";
 
+/**
+ * When Shift is held, collapse the drag to the dominant axis so the wall is
+ * strictly horizontal or vertical relative to `start` — the CAD "ortho"
+ * lock users expect. Passthrough otherwise, which lets the user draw at
+ * any angle they like.
+ */
+export function applyAxisLock(start: Point, end: Point, shiftKey: boolean): Point {
+  if (!shiftKey) return end;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return { x: end.x, y: start.y };
+  return { x: start.x, y: end.y };
+}
+
 /** Length of a wall's inner line in cm. */
 export function wallLength(wall: Wall): number {
   const [a, b] = wall.innerLine;
@@ -77,29 +91,22 @@ export function findEndpointSnapTarget(
 }
 
 /**
- * Snap a candidate wall endpoint (in cm) to the nearest of:
- * 1. an existing wall endpoint (within `endpointSnapCm`) — returned
- *    verbatim so the new wall shares the exact vertex coordinate;
- * 2. an axis-aligned direction from `origin` (if origin provided) — the
- *    stronger axis wins so the user gets a horizontal or vertical wall
- *    almost automatically.
+ * Snap a candidate wall endpoint (in cm) to the nearest existing wall
+ * endpoint within `endpointSnapCm` — returned verbatim so the new wall
+ * shares the exact vertex coordinate. Returns the input unchanged when
+ * no endpoint is in range.
+ *
+ * Axis locking (ortho) is intentionally NOT done here — that lives in
+ * `applyAxisLock` and is opt-in via the Shift key. Bundling it here made
+ * every drag snap to 0/90/180/270°, defeating free-angle drawing.
  */
 export function snapEndpoint(
   candidate: Point,
   walls: Wall[],
-  origin: Point | null,
   endpointSnapCm: number
 ): Point {
   const target = findEndpointSnapTarget(candidate, walls, endpointSnapCm);
-  if (target) return target;
-
-  if (origin) {
-    const dx = Math.abs(candidate.x - origin.x);
-    const dy = Math.abs(candidate.y - origin.y);
-    if (dx > dy) return { x: candidate.x, y: origin.y };
-    return { x: origin.x, y: candidate.y };
-  }
-  return candidate;
+  return target ?? candidate;
 }
 
 /**
