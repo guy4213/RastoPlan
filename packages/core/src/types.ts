@@ -54,11 +54,21 @@ export interface Wall {
 /** Node kind, determined by how many edges meet there. */
 export type NodeType = "L" | "T" | "cross" | "end";
 
+/**
+ * Concave ('inner', e.g. the notch of an L-shaped room) vs convex ('outer',
+ * e.g. a regular box corner) relative to the wall loop's interior. Only
+ * meaningful for 'L' nodes that sit on a fully closed loop of 'L' nodes —
+ * left undefined otherwise (added in Milestone 2, geometry layer).
+ */
+export type CornerSide = "inner" | "outer";
+
 /** A vertex in the wall graph (derived from wall endpoints/intersections). */
 export interface Node {
   id: string;
   point: Point;
   type: NodeType;
+  /** set by the geometry layer for classifiable 'L' nodes; see CornerSide. */
+  cornerSide?: CornerSide;
 }
 
 /** A segment between two graph nodes, belonging to one wall. */
@@ -71,6 +81,8 @@ export interface Edge {
   nodeB: string;
   /** length in cm after subtracting corner regions */
   clearLength: number;
+  /** deferred-processing tags, e.g. "unresolved-T", "unresolved-cross" (added in Milestone 2, geometry layer) */
+  flags: string[];
 }
 
 // ── Layout result ──
@@ -89,6 +101,12 @@ export interface Placement {
   kind: PlacementKind;
   /** catalog panel type id, e.g. "R75", "C30x30" */
   panelType: string;
+  /**
+   * Groups placements that are ONE physical unit. A corner panel wraps the
+   * corner, so it emits one leg on each meeting wall — both legs share
+   * `groupId` and must be counted (and priced) once. Undefined = standalone.
+   */
+  groupId?: string;
   /** offset in cm from nodeA along the edge */
   offsetAlongEdge: number;
   /** width in cm */
@@ -104,14 +122,20 @@ export interface Placement {
 export interface Panel {
   /** unique id, e.g. "R75" */
   type: string;
-  /** width in cm */
+  /** width in cm; for a corner panel this is one leg */
   width: number;
-  /** height in cm, always 300 for the current catalog */
+  /** height in cm, always 300 for the current catalog — see AVAILABLE_PANEL_HEIGHTS */
   height: number;
+  /** second leg in cm, corner panels only (C30x30 → 30). Straight panels leave it undefined. */
+  secondLegWidth?: number;
   /** true = a leading panel type (emphasized by the customer) */
   isLeading: boolean;
   /** false = not allowed for auto-tiling (manual exception only) */
   inStock: boolean;
+  /** 'straight' fills a plain wall run; 'corner' (e.g. C30x30) wraps an L corner; 'corner-axial' is the axial corner variant, never auto-selected */
+  kind: "straight" | "corner" | "corner-axial";
+  /** exact row label in the customer's Priority BOM sheet, e.g. "פנאל 75/300" */
+  bomLabel: string;
 }
 
 export interface PanelCatalog {
@@ -124,14 +148,16 @@ export interface PanelCatalog {
 export type TilingPriority = "leading" | "min-panels" | "min-gap";
 
 export interface AccessoryRules {
-  /** clamps used per corner, default 3 */
+  /** K30 corner clamps per corner panel unit, default 3 */
   cornerClampsPerCorner: number;
-  /** clamps used per straight joint, default 3 */
+  /** K10 straight clamps per straight panel, default 3 */
   clampsPerStraightJoint: number;
   /** dywidag rods per tie point, default 2 */
   dywidagPerRod: number;
   /** nuts per dywidag rod, default 2 */
   nutsPerDywidag: number;
+  /** walls up to this thickness take the standard 1m dywidag rod; thicker walls need a longer rod, default 30 */
+  dywidagStandardMaxThicknessCm: number;
   /** strut + walkway bracket spacing in cm, interior walls only, default 150 */
   strutSpacingCm: number;
   /** crane adapters needed per project, default 2 */
@@ -140,8 +166,12 @@ export interface AccessoryRules {
   timberGapMin: number;
   /** maximum allowed timber filler gap in cm, default 9 */
   timberGapMax: number;
-  /** how far an outer corner panel protrudes past the wall face in cm, default 10 */
+  /** standard outer-corner overlap in cm — also its upper bound, default 10 */
   outerCornerProtrusionCm: number;
+  /** lower bound for the outer-corner overlap in cm, reached when timber fills the rest, default 5 */
+  outerCornerProtrusionMinCm: number;
+  /** neighbour thickness the standard overlap is quoted for, default 20 */
+  outerCornerProtrusionReferenceThicknessCm: number;
   /** tie-break order for the tiling engine, default ['leading', 'min-panels', 'min-gap'] */
   tilingPriority: TilingPriority[];
 }
