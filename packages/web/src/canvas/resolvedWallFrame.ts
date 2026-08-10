@@ -13,6 +13,8 @@ import type { OutwardSign, Point, ProjectLayout, ResolvedWall, Wall } from "@ras
 export interface ResolvedWallFrame {
   centerline: [Point, Point];
   thickness: number;
+  /** where face B's panels sit, perpendicular to the centerline */
+  faceBOffsetCm: number;
   outwardSign: OutwardSign;
   faceAIsInterior: boolean;
   faceBIsInterior: boolean;
@@ -35,6 +37,7 @@ export function resolvedWallFrame(wall: Wall, layout: ProjectLayout | undefined)
     return {
       centerline: wall.innerLine,
       thickness: wall.thickness,
+      faceBOffsetCm: wall.thickness,
       outwardSign: 1,
       faceAIsInterior: false,
       faceBIsInterior: false,
@@ -45,6 +48,7 @@ export function resolvedWallFrame(wall: Wall, layout: ProjectLayout | undefined)
   return {
     centerline: wall.innerLine,
     thickness: wall.thickness,
+    faceBOffsetCm: wall.thickness,
     outwardSign: 1,
     faceAIsInterior: true,
     faceBIsInterior: false,
@@ -60,6 +64,7 @@ function frameOf(resolved: ResolvedWall): ResolvedWallFrame {
   return {
     centerline: resolved.centerline,
     thickness: resolved.thickness,
+    faceBOffsetCm: resolved.faceBOffsetCm,
     outwardSign: resolved.outwardSign,
     faceAIsInterior: resolved.faces[0].isInterior,
     faceBIsInterior: resolved.faces[1].isInterior,

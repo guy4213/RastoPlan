@@ -90,7 +90,8 @@ export function Placements({
         // away from the wall body so they never overlap it.
         const sideSign: 1 | -1 =
           placement.side === "faceB" ? frame.outwardSign : (-frame.outwardSign as 1 | -1);
-        const baseOffset = placement.side === "faceB" ? frame.thickness * frame.outwardSign : 0;
+        const baseOffset =
+          placement.side === "faceB" ? frame.faceBOffsetCm * frame.outwardSign : 0;
         const dir = wallDirection(wall);
         const n = wallNormal(wall);
 

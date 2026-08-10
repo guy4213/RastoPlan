@@ -171,6 +171,13 @@ export interface ResolvedWall {
   centerline: [Point, Point];
   thickness: number;
   thicknessSource: "measured" | "declared";
+  /**
+   * Perpendicular distance from the centerline to face B, in cm. When the user
+   * drew the far contour this is where that contour actually is, so its panels
+   * land on the line they drew rather than on a line derived from the typed
+   * thickness. Equals `thickness` when face B had to be derived.
+   */
+  faceBOffsetCm: number;
   /** direction from face A to face B */
   outwardSign: OutwardSign;
   faces: [ResolvedWallFace, ResolvedWallFace];

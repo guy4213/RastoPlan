@@ -78,8 +78,15 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
   const consumedAtA = bordersRoom ? (cornerA ? cornerPanelWidth : 0) : protrusionAtA;
   const consumedAtB = bordersRoom ? (cornerB ? cornerPanelWidth : 0) : protrusionAtB;
 
-  const extensionAtA = extensionFor(cornersAtA, faceSpec?.regionId, neighbourAt(edge.nodeA));
-  const extensionAtB = extensionFor(cornersAtB, faceSpec?.regionId, neighbourAt(edge.nodeB));
+  // When the user drew this face as its own contour, its extent is a fact we
+  // can read straight off the drawing. Only a derived face has to infer how far
+  // it wraps past each corner from the neighbouring wall's thickness.
+  const drawn = faceSpec?.sourceWallId && face !== "faceA" ? projectedExtent(input) : null;
+  const extensionAtA =
+    drawn?.startExtension ??
+    extensionFor(cornersAtA, faceSpec?.regionId, neighbourAt(edge.nodeA));
+  const extensionAtB =
+    drawn?.endExtension ?? extensionFor(cornersAtB, faceSpec?.regionId, neighbourAt(edge.nodeB));
 
   // The interior face keeps the historical frame exactly: its run starts at 0
   // and simply loses a leg at each end. Only the outer face needed a real
@@ -109,8 +116,31 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
 }
 
 /**
- * How far past the drawn line this face reaches at one end. Convex corners push
- * the outer face out by the neighbour's thickness; concave ones pull it in.
+ * How far this face's own drawn contour reaches past each end of the
+ * centerline, measured along the centerline's direction.
+ */
+function projectedExtent(
+  input: FaceRunInput
+): { startExtension: number; endExtension: number } | null {
+  const face = input.resolvedWall.faces.find((f) => f.id === input.face);
+  const [a, b] = input.resolvedWall.centerline;
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  if (!face || length === 0) return null;
+
+  const ux = (b.x - a.x) / length;
+  const uy = (b.y - a.y) / length;
+  const along = (p: { x: number; y: number }) => (p.x - a.x) * ux + (p.y - a.y) * uy;
+
+  const ends = [along(face.line[0]), along(face.line[1])].sort((x, y) => x - y);
+  return {
+    startExtension: Math.round(-ends[0]!),
+    endExtension: Math.round(ends[1]! - input.geometricLength),
+  };
+}
+
+/**
+ * How far past the drawn line a DERIVED face reaches at one end. Convex corners
+ * push the outer face out by the neighbour's thickness; concave ones pull it in.
  */
 function extensionFor(
   corners: CornerAtNode[],

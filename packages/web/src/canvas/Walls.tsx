@@ -73,7 +73,7 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
         const frame = resolvedWallFrame(wall, layout);
         // Offset in the RESOLVED outward direction, not blindly along +normal:
         // on a wall drawn the other way round the far face is on the other side.
-        const push = frame.thickness * frame.outwardSign;
+        const push = frame.faceBOffsetCm * frame.outwardSign;
         const outerA = { x: a.x + n.x * push, y: a.y + n.y * push };
         const outerB = { x: b.x + n.x * push, y: b.y + n.y * push };
 

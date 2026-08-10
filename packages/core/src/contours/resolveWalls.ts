@@ -276,6 +276,10 @@ function buildPairedWall(
     // says which drawn line is the far face, so it isn't formed twice.
     thickness: wall.thickness,
     thicknessSource: "declared",
+    // Face B sits on the contour the user drew for it — that is the whole point
+    // of drawing two contours. The typed thickness stays the engineering input
+    // (rod length, BOM); it does not move the drawn line.
+    faceBOffsetCm: pairing.measuredThicknessCm,
     outwardSign,
     faces: [
       {
@@ -287,7 +291,7 @@ function buildPairedWall(
       },
       {
         id: "faceB",
-        line: deriveOuterLine(wall, outwardSign),
+        line: [{ ...partnerWall.innerLine[0] }, { ...partnerWall.innerLine[1] }],
         isInterior: isInteriorRegion(faceBRegionId, regionById),
         regionId: faceBRegionId,
         sourceWallId: partnerWall.id,
@@ -322,6 +326,7 @@ function buildUnpairedWall(
     centerline: [{ ...wall.innerLine[0] }, { ...wall.innerLine[1] }],
     thickness: wall.thickness,
     thicknessSource: "declared",
+    faceBOffsetCm: wall.thickness,
     outwardSign,
     faces: [
       {
