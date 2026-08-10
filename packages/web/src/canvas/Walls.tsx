@@ -26,6 +26,38 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
   const draggable = state.ui.tool === "select";
   const selectedSet = new Set(selectedWallIds);
   const units = state.ui.units;
+
+  /**
+   * Retype a wall's length. Endpoint A stays put and B slides along the wall's
+   * own direction, so the wall keeps its angle and its corner with whatever
+   * meets it at A.
+   */
+  function onEditLength(wall: Wall) {
+    const [a, b] = wall.innerLine;
+    const current = Math.hypot(b.x - a.x, b.y - a.y);
+    if (current < 1) return;
+
+    const shown = units === "m" ? (current / 100).toFixed(2) : String(Math.round(current));
+    const entered = window.prompt(
+      units === "m" ? 'אורך הקיר (מ׳)' : 'אורך הקיר (ס"מ)',
+      shown
+    );
+    if (entered === null) return;
+
+    const parsed = Number(entered.replace(",", "."));
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    const targetCm = Math.round(units === "m" ? parsed * 100 : parsed);
+
+    const ux = (b.x - a.x) / current;
+    const uy = (b.y - a.y) / current;
+    dispatch({
+      type: "update-wall",
+      wallId: wall.id,
+      patch: {
+        innerLine: [a, { x: Math.round(a.x + ux * targetCm), y: Math.round(a.y + uy * targetCm) }],
+      },
+    });
+  }
   // Hide length labels on walls shorter than the text would need, and
   // when zoomed so far out that even a big wall looks < ~60px on screen.
   const minCmForLabel = 60 / scale;
@@ -155,6 +187,7 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
               units={units}
               highlight={selected}
               hidden={Math.hypot(b.x - a.x, b.y - a.y) < minCmForLabel}
+              onEdit={() => onEditLength(wall)}
             />
           </Group>
         );
@@ -175,6 +208,7 @@ function WallLengthLabel({
   units,
   highlight,
   hidden,
+  onEdit,
 }: {
   wall: Wall;
   outwardSign: 1 | -1;
@@ -182,6 +216,7 @@ function WallLengthLabel({
   units: "cm" | "m";
   highlight: boolean;
   hidden: boolean;
+  onEdit: () => void;
 }) {
   if (hidden) return null;
   const [a, b] = wall.innerLine;
@@ -213,7 +248,24 @@ function WallLengthLabel({
       rotation={finalAngle}
       offsetX={(text.length * fontSize * 0.28)}
       offsetY={fontSize / 2}
-      listening={false}
+      // Clicking the dimension is how you set an exact length — dragging an
+      // endpoint can only ever land on whole pixels.
+      onClick={(e) => {
+        e.cancelBubble = true;
+        onEdit();
+      }}
+      onTap={(e) => {
+        e.cancelBubble = true;
+        onEdit();
+      }}
+      onMouseEnter={(e) => {
+        const stage = e.target.getStage();
+        if (stage) stage.container().style.cursor = "text";
+      }}
+      onMouseLeave={(e) => {
+        const stage = e.target.getStage();
+        if (stage) stage.container().style.cursor = "default";
+      }}
     />
   );
 }

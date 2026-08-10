@@ -7,12 +7,14 @@ function edge(clearLength: number): Edge {
   return { id: "edge:1", wallId: "wall:1", nodeA: "n0", nodeB: "n1", clearLength, flags: [] };
 }
 
-const faceA: TileWallTarget = {
+const target = (clearLength: number, startOffset = 0): TileWallTarget => ({
   wallId: "wall:1",
   pourId: "pour-1",
   side: "faceA",
   faceIsInterior: true,
-};
+  clearLength,
+  startOffset,
+});
 
 /** Sparse stock list — the full catalog can fill 42cm, so it can't exercise the failure path. */
 function sparseCatalog(): PanelCatalog {
@@ -31,7 +33,7 @@ function sparseCatalog(): PanelCatalog {
 
 describe("tileWall", () => {
   it("customer verification case: 340cm wall -> R75,R75,R40,R75,R75, no timber, all face-A/auto", () => {
-    const placements = tileWall(edge(340), faceA,DEFAULT_PANEL_CATALOG, DEFAULT_ACCESSORY_RULES);
+    const placements = tileWall(edge(340), target(340), DEFAULT_PANEL_CATALOG, DEFAULT_ACCESSORY_RULES);
 
     expect(placements.map((p) => p.panelType)).toEqual(["R75", "R75", "R40", "R75", "R75"]);
     expect(placements.map((p) => p.width)).toEqual([75, 75, 40, 75, 75]);
@@ -47,14 +49,33 @@ describe("tileWall", () => {
     // A hand-drawn wall is almost never an exact whole number of cm. Before
     // rounding, every such wall matched no combination at all and came back as
     // a single full-length timber filler.
-    const placements = tileWall(edge(340.0416305603426), faceA, DEFAULT_PANEL_CATALOG, DEFAULT_ACCESSORY_RULES);
+    const placements = tileWall(
+      edge(340),
+      target(340.0416305603426),
+      DEFAULT_PANEL_CATALOG,
+      DEFAULT_ACCESSORY_RULES
+    );
 
     expect(placements.map((p) => p.panelType)).toEqual(["R75", "R75", "R40", "R75", "R75"]);
     expect(placements.some((p) => p.flags.includes("gap-out-of-range"))).toBe(false);
   });
 
+  it("lays an outer face out from its own negative start offset", () => {
+    // The outer face begins before the drawn line does, by the neighbouring
+    // wall's thickness at the corner it wraps.
+    const placements = tileWall(
+      edge(340),
+      { ...target(340, -20), side: "faceB", faceIsInterior: false },
+      DEFAULT_PANEL_CATALOG,
+      DEFAULT_ACCESSORY_RULES
+    );
+
+    expect(placements.map((p) => p.offsetAlongEdge)).toEqual([-20, 55, 130, 170, 245]);
+    expect(placements.every((p) => p.side === "faceB")).toBe(true);
+  });
+
   it("no valid combination: returns one flagged placement spanning the whole edge instead of crashing", () => {
-    const placements = tileWall(edge(42), faceA,sparseCatalog(), DEFAULT_ACCESSORY_RULES);
+    const placements = tileWall(edge(42), target(42), sparseCatalog(), DEFAULT_ACCESSORY_RULES);
 
     expect(placements).toHaveLength(1);
     expect(placements[0]?.flags).toEqual(["gap-out-of-range"]);

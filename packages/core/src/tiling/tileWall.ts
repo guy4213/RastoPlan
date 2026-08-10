@@ -12,20 +12,31 @@ export interface TileWallTarget {
   /** the ResolvedWall this edge belongs to */
   wallId: string;
   pourId: string;
-  /** the face being tiled — the opposite one is mirrored by syncFacePlacements */
   side: PlacementSide;
   faceIsInterior: boolean;
+  /**
+   * Length of THIS face's straight run. The two faces of a wall differ: the
+   * outer one wraps past each convex corner by the neighbour's thickness.
+   */
+  clearLength: number;
+  /**
+   * Where that run begins in the wall's along-axis frame. Negative for an
+   * outer face, which starts before the drawn line does.
+   */
+  startOffset: number;
 }
 
 /**
- * Tiles one straight edge: selects a panel combination, arranges it per the
- * middle rule, and returns full Placements on one face.
+ * Tiles one face of one edge: selects a panel combination, arranges it per the
+ * middle rule, and returns full Placements.
  *
- * The far face is not tiled here — it is mirrored at identical offsets by
- * syncFacePlacements, which is what keeps the Dywidag holes aligned.
+ * Each face is tiled on its own run. They cannot share one: a room's outer ring
+ * is longer than its inner ring by the neighbouring walls' thickness at every
+ * corner, so mirroring the inner layout outward leaves the outer face short by
+ * exactly that much.
  *
  * If no valid combination exists, returns a single Placement spanning the
- * whole edge, flagged 'gap-out-of-range', instead of an empty array — so
+ * whole run, flagged 'gap-out-of-range', instead of an empty array — so
  * the failure is visible on the edge rather than silently absent.
  */
 export function tileWall(
@@ -34,7 +45,7 @@ export function tileWall(
   catalog: PanelCatalog,
   rules: AccessoryRules
 ): Placement[] {
-  const selection = selectPanels(edge.clearLength, catalog, rules);
+  const selection = selectPanels(target.clearLength, catalog, rules);
   const common = {
     edgeId: edge.id,
     wallId: target.wallId,
@@ -48,11 +59,11 @@ export function tileWall(
     return [
       {
         ...common,
-        id: `placement:${edge.id}:0`,
+        id: `placement:${edge.id}:${target.side}:0`,
         kind: "timber",
         panelType: "",
-        offsetAlongEdge: 0,
-        width: edge.clearLength,
+        offsetAlongEdge: target.startOffset,
+        width: target.clearLength,
         flags: ["gap-out-of-range"],
       },
     ];
@@ -62,10 +73,10 @@ export function tileWall(
 
   return arranged.map((item, index) => ({
     ...common,
-    id: `placement:${edge.id}:${index}`,
+    id: `placement:${edge.id}:${target.side}:${index}`,
     kind: item.kind,
     panelType: item.kind === "panel" ? item.panel.type : "timber",
-    offsetAlongEdge: item.offsetAlongEdge,
+    offsetAlongEdge: target.startOffset + item.offsetAlongEdge,
     width: item.width,
     flags: [],
   }));

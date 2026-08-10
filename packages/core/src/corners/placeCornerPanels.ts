@@ -11,6 +11,8 @@ import type {
 import type { WallResolution } from "../contours/resolveWalls.js";
 import { otherWallThicknessAt } from "../geometry/neighborThickness.js";
 import { outerCornerProtrusionFor } from "./outerCornerProtrusion.js";
+import { faceRunFor } from "./faceRuns.js";
+import type { FaceRun } from "./faceRuns.js";
 
 export interface PlaceCornerPanelsInput {
   resolution: WallResolution;
@@ -34,6 +36,12 @@ export interface PlaceCornerPanelsResult {
   protrusions: Placement[];
   /** Edges with clearLength recomputed for the corner panels actually placed. */
   edges: Edge[];
+  /**
+   * Where each face's straight run starts and how long it is, per edge. The two
+   * faces differ: the outer one wraps past every convex corner by the
+   * neighbour's thickness, so it carries more panels than the inner one.
+   */
+  runs: Map<string, Record<PlacementSide, FaceRun>>;
 }
 
 /**
@@ -58,6 +66,7 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
 
   const cornerPanels: Placement[] = [];
   const protrusions: Placement[] = [];
+  const runs = new Map<string, Record<PlacementSide, FaceRun>>();
 
   const cornersByEdgeId = new Map<string, typeof resolution.corners>();
   for (const corner of resolution.corners) {
@@ -96,17 +105,47 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
       }
     }
 
-    // Each end loses one corner-panel leg's worth of run when any face there
-    // carries a corner panel. Straight joins and free ends consume nothing.
-    const deduction =
-      (endCorners.A.length > 0 ? cornerPanelWidth : 0) +
-      (endCorners.B.length > 0 ? cornerPanelWidth : 0);
-    const clearLength = Math.max(0, geometricLength - deduction);
+    const protrusionAt = (end: "A" | "B") =>
+      outerCornerProtrusionFor(
+        otherWallThicknessAt(
+          end === "A" ? edge.nodeA : edge.nodeB,
+          edge,
+          resolution.edges,
+          wallById
+        ),
+        rules
+      );
+    const protrusionAtA = protrusionAt("A");
+    const protrusionAtB = protrusionAt("B");
+
+    const runFor = (face: PlacementSide): FaceRun =>
+      faceRunFor({
+        edge,
+        resolvedWall,
+        face,
+        geometricLength,
+        cornersAtA: endCorners.A,
+        cornersAtB: endCorners.B,
+        cornerPanelWidth,
+        protrusionAtA: endCorners.A.some((c) => c.side === "outer") ? protrusionAtA : 0,
+        protrusionAtB: endCorners.B.some((c) => c.side === "outer") ? protrusionAtB : 0,
+        edges: resolution.edges,
+        nodeById,
+        wallById,
+      });
+
+    const faceRuns = { faceA: runFor("faceA"), faceB: runFor("faceB") };
+    runs.set(edge.id, faceRuns);
+
+    // The interior run is what struts, dywidag and every existing calibration
+    // read off the Edge; the outer face's own run lives in `runs`.
+    const clearLength = faceRuns.faceA.clearLength;
 
     for (const end of ["A", "B"] as const) {
       for (const corner of endCorners[end]) {
         const face = faceForRegion(resolvedWall, corner.regionId);
         if (!face) continue;
+        const run = faceRuns[face];
 
         cornerPanels.push({
           id: `placement:${edge.id}:corner:${end}:${face}`,
@@ -118,7 +157,8 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
           faceIsInterior: true,
           kind: "corner-panel",
           panelType: cornerPanelType,
-          offsetAlongEdge: end === "A" ? -cornerPanelWidth : clearLength,
+          offsetAlongEdge:
+            end === "A" ? run.startOffset - cornerPanelWidth : run.startOffset + run.clearLength,
           width: cornerPanelWidth,
           source: "auto",
           flags: [],
@@ -129,15 +169,8 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
         const exterior = otherFace(resolvedWall, face);
         if (exterior.isInterior) continue;
 
-        const protrusion = outerCornerProtrusionFor(
-          otherWallThicknessAt(
-            end === "A" ? edge.nodeA : edge.nodeB,
-            edge,
-            resolution.edges,
-            wallById
-          ),
-          rules
-        );
+        const exteriorRun = faceRuns[exterior.id];
+        const width = end === "A" ? protrusionAtA : protrusionAtB;
         protrusions.push({
           id: `placement:${edge.id}:protrusion:${end}`,
           edgeId: edge.id,
@@ -147,8 +180,11 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
           faceIsInterior: false,
           kind: "panel",
           panelType: "",
-          offsetAlongEdge: end === "A" ? -protrusion : clearLength,
-          width: protrusion,
+          offsetAlongEdge:
+            end === "A"
+              ? exteriorRun.startOffset - width
+              : exteriorRun.startOffset + exteriorRun.clearLength,
+          width,
           source: "auto",
           flags: ["outer-corner-protrusion"],
         });
@@ -158,7 +194,7 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
     return { ...edge, clearLength, flags };
   });
 
-  return { cornerPanels, protrusions, edges: adjustedEdges };
+  return { cornerPanels, protrusions, edges: adjustedEdges, runs };
 }
 
 function cornersAt(

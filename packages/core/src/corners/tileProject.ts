@@ -3,7 +3,6 @@ import { resolveWalls } from "../contours/resolveWalls.js";
 import type { ResolveOptions } from "../contours/constants.js";
 import { tileWall } from "../tiling/tileWall.js";
 import { placeCornerPanels } from "./placeCornerPanels.js";
-import { syncFacePlacements } from "./syncFacePlacements.js";
 
 /** Bump when a change makes previously saved layouts wrong rather than merely stale. */
 export const ENGINE_VERSION = 2;
@@ -41,25 +40,30 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
 
   for (const resolvedWall of resolution.resolvedWalls) {
     const edge = edgeById.get(`edge:${resolvedWall.id}`);
-    if (!edge) continue;
+    const runs = corners.runs.get(edge?.id ?? "");
+    if (!edge || !runs) continue;
 
-    const [faceA, faceB] = resolvedWall.faces;
-    const tiles = tileWall(
-      edge,
-      {
-        wallId: resolvedWall.id,
-        pourId: resolvedWall.pourId,
-        side: faceA.id,
-        faceIsInterior: faceA.isInterior,
-      },
-      catalog,
-      rules
+    // Each face on its own run — see tileWall. The outer ring of a room carries
+    // more panels than the inner ring, which is what the customer's plans show.
+    const faces = resolvedWall.faces.map((face) =>
+      tileWall(
+        edge,
+        {
+          wallId: resolvedWall.id,
+          pourId: resolvedWall.pourId,
+          side: face.id,
+          faceIsInterior: face.isInterior,
+          clearLength: runs[face.id].clearLength,
+          startOffset: runs[face.id].startOffset,
+        },
+        catalog,
+        rules
+      )
     );
 
     placements.push(
       ...corners.cornerPanels.filter((p) => p.edgeId === edge.id),
-      ...tiles,
-      ...syncFacePlacements(tiles, faceB.id, faceB.isInterior),
+      ...faces.flat(),
       ...corners.protrusions.filter((p) => p.edgeId === edge.id)
     );
   }

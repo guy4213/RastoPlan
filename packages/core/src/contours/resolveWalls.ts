@@ -15,7 +15,7 @@ import { buildPlanarFaces } from "../geometry/planarFaces.js";
 import type { PlanarFacesResult } from "../geometry/planarFaces.js";
 import { unitNormal } from "../geometry/polygon.js";
 import { deriveOuterLine } from "../corners/deriveOuterLine.js";
-import { THICKNESS_MISMATCH_TOLERANCE_CM, withDefaults } from "./constants.js";
+import { withDefaults } from "./constants.js";
 import type { ResolveOptions } from "./constants.js";
 import { buildRegions, OUTSIDE_REGION_ID } from "./regions.js";
 import type { Region } from "./regions.js";
@@ -173,7 +173,6 @@ export function resolveWalls(walls: Wall[], options: ResolveOptions = {}): WallR
   }
 
   reportAutoPairings(materialPairings, edgeById, diagnostics);
-  reportThicknessMismatches(resolvedWalls, wallById, diagnostics);
 
   return {
     nodes,
@@ -272,8 +271,11 @@ function buildPairedWall(
     sourceWallId: wall.id,
     consumedWallIds: [partnerWall.id],
     centerline: [{ ...wall.innerLine[0] }, { ...wall.innerLine[1] }],
-    thickness: pairing.measuredThicknessCm,
-    thicknessSource: "measured",
+    // The thickness the user typed, not the distance between the two drawn
+    // contours. The engineer sets the wall thickness; the second contour only
+    // says which drawn line is the far face, so it isn't formed twice.
+    thickness: wall.thickness,
+    thicknessSource: "declared",
     outwardSign,
     faces: [
       {
@@ -285,7 +287,7 @@ function buildPairedWall(
       },
       {
         id: "faceB",
-        line: [{ ...partnerWall.innerLine[0] }, { ...partnerWall.innerLine[1] }],
+        line: deriveOuterLine(wall, outwardSign),
         isInterior: isInteriorRegion(faceBRegionId, regionById),
         regionId: faceBRegionId,
         sourceWallId: partnerWall.id,
@@ -421,23 +423,3 @@ function reportAutoPairings(
   });
 }
 
-function reportThicknessMismatches(
-  resolvedWalls: ResolvedWall[],
-  wallById: Map<string, Wall>,
-  diagnostics: Diagnostic[]
-): void {
-  for (const resolvedWall of resolvedWalls) {
-    if (resolvedWall.thicknessSource !== "measured") continue;
-    const declared = wallById.get(resolvedWall.sourceWallId)?.thickness;
-    if (declared === undefined) continue;
-    if (Math.abs(declared - resolvedWall.thickness) <= THICKNESS_MISMATCH_TOLERANCE_CM) continue;
-
-    diagnostics.push({
-      code: "thickness-mismatch",
-      severity: "warning",
-      message: `העובי שנמדד לקיר ${resolvedWall.sourceWallId} הוא ${resolvedWall.thickness.toFixed(1)} ס"מ, אך הוקלד ${declared} ס"מ`,
-      wallIds: [resolvedWall.sourceWallId],
-      nodeIds: [],
-    });
-  }
-}

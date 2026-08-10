@@ -47,12 +47,16 @@ describe("resolveWalls on the customer's two-contour drawing", () => {
     ]);
   });
 
-  it("measures the thickness from the drawing instead of trusting the typed value", () => {
-    const result = resolveWalls(doubleContourRoomWalls());
+  it("takes the thickness the engineer typed, not the gap between the drawn contours", () => {
+    // The second contour says which line is the far face so it isn't formed
+    // twice; it does not overrule the wall thickness, which is the engineer's
+    // to set. A plan drawn out of scale must not silently become a 2m wall.
+    const walls = doubleContourRoomWalls().map((w) => ({ ...w, thickness: 25 }));
+    const result = resolveWalls(walls);
 
     for (const wall of result.resolvedWalls) {
-      expect(wall.thicknessSource).toBe("measured");
-      expect(wall.thickness).toBeCloseTo(20);
+      expect(wall.thicknessSource).toBe("declared");
+      expect(wall.thickness).toBe(25);
     }
   });
 
@@ -182,11 +186,11 @@ describe("resolveWalls on single-contour drawings", () => {
     expect(result.nodes.filter((n) => n.type === "straight-join")).toHaveLength(1);
   });
 
-  it("reports a thickness that contradicts the drawing", () => {
+  it("does not second-guess the typed thickness", () => {
     const walls: Wall[] = doubleContourRoomWalls().map((w) => ({ ...w, thickness: 40 }));
     const codes = resolveWalls(walls).diagnostics.map((d) => d.code);
 
-    expect(codes).toContain("thickness-mismatch");
+    expect(codes).not.toContain("thickness-mismatch");
   });
 });
 
