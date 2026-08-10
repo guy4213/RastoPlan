@@ -32,10 +32,13 @@ interface Candidate {
  * the previous brute enumeration blew the heap for walls past ~10 m.
  */
 export function selectPanels(
-  clearLength: number,
+  rawClearLength: number,
   catalog: PanelCatalog,
   rules: AccessoryRules
 ): SelectPanelsResult {
+  // The DP below is indexed by whole centimetres, so a fractional run would
+  // match nothing and report the wall as untileable rather than off by 3mm.
+  const clearLength = Math.round(rawClearLength);
   const straightInStock = catalog.panels.filter((p) => p.inStock && p.kind === "straight");
   const widthToPanel = new Map<number, Panel>();
   for (const panel of straightInStock) {

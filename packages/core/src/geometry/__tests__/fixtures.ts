@@ -131,6 +131,19 @@ export function roomWithInteriorWallWalls(): Wall[] {
 }
 
 /**
+ * The 400x300 room with its bottom wall drawn 3px off level — what a hand
+ * traced plan actually looks like. Every wall length here is irrational.
+ */
+export function slightlySkewedRoomWalls(): Wall[] {
+  return [
+    makeWall("bottom", { x: 0, y: 3 }, { x: 400, y: 0 }, 20),
+    makeWall("right", { x: 400, y: 0 }, { x: 400, y: 300 }, 20),
+    makeWall("top", { x: 400, y: 300 }, { x: 0, y: 300 }, 20),
+    makeWall("left", { x: 0, y: 300 }, { x: 0, y: 3 }, 20),
+  ];
+}
+
+/**
  * A 600x300 room split by an L-shaped partition, so the partition has a real
  * corner at (300,150) with a room on BOTH sides. That corner is convex for the
  * small room and concave for the large one — one physical corner, two corner

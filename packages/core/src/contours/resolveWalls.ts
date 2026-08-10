@@ -364,6 +364,15 @@ function classifyRegionKinds(
   return regions.map((region) => {
     if (region.kind === "outside") return region;
 
+    // Wall material is the space BETWEEN two contours, so it always wraps
+    // something: no hole, no wall. Without this a plain rectangular room pairs
+    // its own two long walls against each other and declares itself solid
+    // concrete — they are parallel, evenly spaced, and face each other exactly
+    // like the two sides of a wall do.
+    if (region.holeCycleIds.length === 0) {
+      return { ...region, kind: "room" as const, pairedCoverage: 0 };
+    }
+
     const coverage = coverageByRegionId.get(region.id) ?? 0;
     if (coverage >= options.materialMinCoverage) {
       return { ...region, kind: "wall-material" as const, pairedCoverage: coverage };

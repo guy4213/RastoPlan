@@ -41,14 +41,22 @@ export function classifyCornerSides(
   const corners: CornerAtNode[] = [];
   const seen = new Set<string>();
 
+  // Convexity is measured against the traversal, not the traced polygon's
+  // winding: a room bounded by a hole (a free-standing room inside a bigger
+  // one) has that hole's cycle as part of its boundary, and there the region
+  // lies OUTSIDE the polygon. The one invariant that holds for every cycle is
+  // that its region sits on `regionSideOfDart` of each of its darts.
+  const convexTurnSign = -faces.regionSideOfDart;
+
   for (const cycle of faces.cycles) {
-    if (cycle.isUnbounded) continue;
+    // Without region information an unbounded cycle can't be told apart from
+    // the true exterior, so only bounded faces are safe to classify.
+    if (cycle.isUnbounded && !lookup) continue;
 
     const regionId = lookup ? lookup.regionIdByCycleId.get(cycle.id) : cycle.id;
     if (!regionId) continue;
     if (lookup && !lookup.roomRegionIds.has(regionId)) continue;
 
-    const areaSign = Math.sign(cycle.signedArea);
     const count = cycle.dartIds.length;
 
     for (let i = 0; i < count; i++) {
@@ -75,8 +83,8 @@ export function classifyCornerSides(
         cycleId: cycle.id,
         edgeAId: edgeIdByDartId.get(incoming.id)!,
         edgeBId: edgeIdByDartId.get(outgoing.id)!,
-        side: Math.sign(turn) === areaSign ? "outer" : "inner",
-        interiorAngleDeg: 180 - areaSign * turnDeg,
+        side: Math.sign(turn) === convexTurnSign ? "outer" : "inner",
+        interiorAngleDeg: 180 - convexTurnSign * turnDeg,
         flags: [],
       });
     }

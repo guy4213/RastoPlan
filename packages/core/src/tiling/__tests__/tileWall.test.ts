@@ -43,6 +43,16 @@ describe("tileWall", () => {
     expect(placements.every((p) => p.edgeId === "edge:1")).toBe(true);
   });
 
+  it("tiles a wall drawn slightly off-axis instead of declaring it untileable", () => {
+    // A hand-drawn wall is almost never an exact whole number of cm. Before
+    // rounding, every such wall matched no combination at all and came back as
+    // a single full-length timber filler.
+    const placements = tileWall(edge(340.0416305603426), faceA, DEFAULT_PANEL_CATALOG, DEFAULT_ACCESSORY_RULES);
+
+    expect(placements.map((p) => p.panelType)).toEqual(["R75", "R75", "R40", "R75", "R75"]);
+    expect(placements.some((p) => p.flags.includes("gap-out-of-range"))).toBe(false);
+  });
+
   it("no valid combination: returns one flagged placement spanning the whole edge instead of crashing", () => {
     const placements = tileWall(edge(42), faceA,sparseCatalog(), DEFAULT_ACCESSORY_RULES);
 

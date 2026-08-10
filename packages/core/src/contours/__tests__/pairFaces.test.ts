@@ -51,12 +51,20 @@ describe("pairFaces", () => {
     expect(pair(slab(10)).pairings).toHaveLength(0);
   });
 
-  it("rejects a separation too large to be a wall", () => {
-    expect(pair(slab(250)).pairings).toHaveLength(0);
+  it("pairs at any thickness by default — the drawing convention decides, not the distance", () => {
+    // A bare rectangle pairs on both axes once the ceiling is gone; deciding
+    // that it is a room after all is the hole rule's job, not this layer's.
+    for (const gap of [70, 250]) {
+      const long = pair(slab(gap)).pairings.find(
+        (p) => p.edgeAId === "edge:w0" && p.edgeBId === "edge:w2"
+      );
+      expect(long, `gap=${gap}`).toBeDefined();
+      expect(long!.measuredThicknessCm).toBeCloseTo(gap);
+    }
   });
 
-  it("honours a widened thickness band for thick basement walls", () => {
-    expect(pair(slab(70)).pairings).toHaveLength(0);
+  it("still honours an explicit ceiling when one is given", () => {
+    expect(pair(slab(70), { maxThicknessCm: 50 }).pairings).toHaveLength(0);
     expect(pair(slab(70), { maxThicknessCm: 90 }).pairings).toHaveLength(1);
   });
 
@@ -76,7 +84,10 @@ describe("pairFaces", () => {
   });
 
   it("marks a pairing where one contour runs past the other", () => {
-    const { pairings } = pair(doubleContourRoomWalls());
+    // Only the ring between the two contours is wall material; the room inside
+    // pairs its own opposite walls geometrically, and the hole rule in
+    // resolveWalls is what discards those.
+    const { pairings } = resolveWalls(doubleContourRoomWalls());
 
     expect(pairings).toHaveLength(4);
     for (const pairing of pairings) {
@@ -89,18 +100,19 @@ describe("pairFaces", () => {
     ]);
   });
 
-  it("drives the region kind through the coverage threshold", () => {
-    const { coverageByRegionId } = pair(slab(20));
-    const material = [...coverageByRegionId.values()].filter((c) => c > 0);
+  it("scores coverage per boundary segment, so a thick ring is not penalised", () => {
+    const { coverageByRegionId } = pair(doubleContourRoomWalls());
+    const ring = [...coverageByRegionId.entries()].find(([, c]) => c === 1);
 
-    expect(material).toHaveLength(1);
-    expect(material[0]).toBeGreaterThan(0.8);
+    // 8 boundary segments, 4 pairings, every segment claimed.
+    expect(ring).toBeDefined();
   });
 
-  it("falls back to independent walls when the coverage bar is raised out of reach", () => {
-    const result = resolveWalls(doubleContourRoomWalls(), { materialMinCoverage: 0.99 });
+  it("falls back to independent walls when an explicit ceiling rules the pairing out", () => {
+    const result = resolveWalls(doubleContourRoomWalls(), { maxThicknessCm: 10 });
 
+    expect(result.pairings).toHaveLength(0);
     expect(result.consumedWallIds.size).toBe(0);
-    expect(result.diagnostics.map((d) => d.code)).toContain("region-coverage-ambiguous");
+    expect(result.resolvedWalls).toHaveLength(8);
   });
 });

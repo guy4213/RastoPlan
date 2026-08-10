@@ -13,6 +13,7 @@ import {
   lShapeWalls,
   rectangleWalls,
   roomWithInteriorWallWalls,
+  slightlySkewedRoomWalls,
 } from "../../geometry/__tests__/fixtures.js";
 import { tileProject, tileProjectPlacements } from "../tileProject.js";
 
@@ -128,6 +129,16 @@ describe("tileProject — a wall drawn as two collinear segments", () => {
     const rules = DEFAULT_ACCESSORY_RULES;
     const splitCounts = countAccessories(split, layoutEdges(collinearSplitWallWalls()), collinearSplitWallWalls(), rules);
     expect(splitCounts.cornerClamps).toBe(12);
+  });
+});
+
+describe("tileProject — a hand-drawn plan is never perfectly orthogonal", () => {
+  it("tiles a room whose walls are a few millimetres off axis", () => {
+    const placements = tile(slightlySkewedRoomWalls());
+
+    expect(placements.some((p) => p.flags.includes("gap-out-of-range"))).toBe(false);
+    expect(placements.filter((p) => p.kind === "panel").length).toBeGreaterThan(0);
+    expect(countCornerUnits(placements)).toBe(4);
   });
 });
 

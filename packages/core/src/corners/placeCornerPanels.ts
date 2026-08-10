@@ -72,7 +72,11 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
     if (!resolvedWall || !wall) return edge;
 
     const [a, b] = wall.innerLine;
-    const geometricLength = Math.hypot(b.x - a.x, b.y - a.y);
+    // Rounded to whole cm: a wall drawn even slightly off-axis has an
+    // irrational length, and the tiling DP is indexed by whole centimetres —
+    // a fractional clear run matches no combination at all and silently
+    // collapses the entire wall into one timber filler.
+    const geometricLength = Math.round(Math.hypot(b.x - a.x, b.y - a.y));
 
     const endCorners = {
       A: cornersAt(edge, "A", cornersByEdgeId, nodeById),

@@ -96,20 +96,17 @@ export function pairFaces(
     );
 
     const claimed = new Set<string>();
-    let pairedLength = 0;
     for (const candidate of candidates) {
       const [dartA, dartB] = dartIdByPairing.get(candidate)!;
       if (claimed.has(dartA) || claimed.has(dartB)) continue;
       claimed.add(dartA);
       claimed.add(dartB);
       pairings.push(candidate);
-      pairedLength += candidate.overlapCm * 2;
     }
 
-    const boundaryLength = segments.reduce((sum, s) => sum + s.length, 0);
     coverageByRegionId.set(
       region.id,
-      boundaryLength > 0 ? Math.min(1, pairedLength / boundaryLength) : 0
+      segments.length > 0 ? claimed.size / segments.length : 0
     );
   }
 

@@ -4,12 +4,22 @@ export { STRAIGHT_JOIN_TOLERANCE_DEG } from "../geometry/classifyNodes.js";
 export const CONTOUR_PARALLEL_TOLERANCE_DEG = 3;
 
 /**
- * The band of separations that reads as a wall rather than as a gap between two
- * rooms. Below it the two lines are the same face drawn twice; above it they are
- * two different walls. The customer's plans sit at 20–30cm.
+ * Below this the two lines are the same face drawn twice, not a wall.
  */
 export const MIN_PLAUSIBLE_WALL_THICKNESS_CM = 15;
-export const MAX_PLAUSIBLE_WALL_THICKNESS_CM = 50;
+
+/**
+ * There is deliberately NO default ceiling. The customer traces a room as two
+ * nested contours — outer face and inner face — and that convention, not the
+ * measured distance, is what says "this is one wall". A ceiling made a plan
+ * drawn out of scale silently come back as two rooms with four rings of panels
+ * instead of one wall with two.
+ *
+ * The cost: a hall with a free-standing room inside it is geometrically
+ * identical to one thick wall ring, so it reads as a wall by default. Pass
+ * `maxThicknessCm` to get the other reading.
+ */
+export const MAX_PLAUSIBLE_WALL_THICKNESS_CM = Infinity;
 
 /** How much the separation may wobble along the shared run before we refuse to pair. */
 export const CONTOUR_THICKNESS_VARIANCE_CM = 2;
@@ -19,7 +29,13 @@ export const CONTOUR_MIN_OVERLAP_CM = 30;
 /** ...and it must also cover this much of the shorter of the two segments. */
 export const CONTOUR_MIN_OVERLAP_FRACTION = 0.6;
 
-/** Fraction of a region's boundary that must be paired for it to be wall material. */
+/**
+ * Fraction of a region's boundary SEGMENTS that must be paired for it to be
+ * wall material. Counted per segment rather than per centimetre on purpose:
+ * the outer contour of a thick ring is much longer than the inner one, so a
+ * length-weighted score quietly punishes exactly the thick walls it should
+ * accept.
+ */
 export const REGION_MATERIAL_MIN_COVERAGE = 0.8;
 /** Between this and MIN_COVERAGE the region is reported as ambiguous, not decided. */
 export const REGION_MATERIAL_AMBIGUOUS_COVERAGE = 0.4;

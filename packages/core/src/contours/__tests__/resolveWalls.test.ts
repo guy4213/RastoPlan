@@ -125,13 +125,53 @@ describe("resolveWalls on single-contour drawings", () => {
     expect(result.regions.filter((r) => r.kind === "room")).toHaveLength(2);
   });
 
-  it("refuses to pair a free-standing room with the hall around it", () => {
+  it("never treats a plain room as solid wall, however evenly spaced its walls are", () => {
+    // A rectangle's two long walls are parallel, evenly separated and facing
+    // each other — geometrically indistinguishable from the two sides of a
+    // wall. Only the absence of anything nested inside tells them apart.
+    const result = resolveWalls(rectangleWalls());
+
+    expect(result.consumedWallIds.size).toBe(0);
+    expect(result.resolvedWalls).toHaveLength(4);
+    expect(result.regions.filter((r) => r.kind === "wall-material")).toHaveLength(0);
+  });
+
+  it("reads two nested contours as one wall ring whatever the distance between them", () => {
+    // The customer traces a room as an outer and an inner contour; that
+    // convention is the signal, not the measured gap. A plan drawn out of
+    // scale must still come back as one wall with two faces.
     const result = resolveWalls(nestedRoomsWalls());
+
+    expect(result.pairings).toHaveLength(4);
+    expect(result.consumedWallIds.size).toBe(4);
+    expect(result.resolvedWalls).toHaveLength(4);
+    expect(result.regions.filter((r) => r.kind === "wall-material")).toHaveLength(1);
+  });
+
+  it("gives back the two-room reading when an explicit thickness ceiling is set", () => {
+    const result = resolveWalls(nestedRoomsWalls(), { maxThicknessCm: 50 });
 
     expect(result.pairings).toHaveLength(0);
     expect(result.consumedWallIds.size).toBe(0);
-    expect(result.resolvedWalls).toHaveLength(8);
     expect(result.regions.filter((r) => r.kind === "room")).toHaveLength(2);
+  });
+
+  it("classifies a free-standing room's corners for the hall around it too", () => {
+    const result = resolveWalls(nestedRoomsWalls(), { maxThicknessCm: 50 });
+    const roomCorners = result.corners.filter((c) => c.nodeId === cornerNodeId(result, 350, 300));
+
+    // That corner is convex seen from inside the small room and concave seen
+    // from the hall wrapping around it — two corners, not one. Before this,
+    // only bounded cycles were walked, so the hall's side of every hole
+    // boundary produced nothing at all.
+    expect(roomCorners).toHaveLength(2);
+    expect(roomCorners.map((c) => c.side).sort()).toEqual(["inner", "outer"]);
+    expect(roomCorners.map((c) => Math.round(c.interiorAngleDeg)).sort((a, b) => a - b)).toEqual([
+      90, 270,
+    ]);
+
+    // 4 hall corners (one room each) + 4 room corners (two rooms each).
+    expect(result.corners).toHaveLength(12);
   });
 
   it("carries a wall split into two collinear halves without inventing a corner", () => {
@@ -149,6 +189,10 @@ describe("resolveWalls on single-contour drawings", () => {
     expect(codes).toContain("thickness-mismatch");
   });
 });
+
+function cornerNodeId(result: ReturnType<typeof resolveWalls>, x: number, y: number): string {
+  return result.nodes.find((n) => Math.abs(n.point.x - x) < 1 && Math.abs(n.point.y - y) < 1)!.id;
+}
 
 function summarize(result: ReturnType<typeof resolveWalls>) {
   return {
