@@ -24,6 +24,25 @@ export interface Project {
   walls: Wall[];
   /** Tiling engine output plus any manual edits. */
   placements: Placement[];
+  /** Absent on projects saved before the contour layer; treated as 1. */
+  schemaVersion?: number;
+  /**
+   * Everything the engine derived on the last compute. Written alongside
+   * `placements` and cleared with them, so the canvas and the quantities panel
+   * read one shared result instead of each re-deriving the graph.
+   */
+  layout?: ProjectLayout;
+  /** Hand-typed quantities that replace the automatic count; never recomputed. */
+  overrides?: QuantityOverrides;
+}
+
+/**
+ * Hand-typed quantities keyed by pourId. Absent or null means "use the engine's
+ * number"; 0 is a legitimate override and must not be confused with absent.
+ */
+export interface QuantityOverrides {
+  cornerClamps?: Record<string, number | null>;
+  straightClamps?: Record<string, number | null>;
 }
 
 /** A single concrete pour within a project — walls belong to one pour each. */
@@ -51,8 +70,13 @@ export interface Wall {
 
 // ── Geometric graph — built automatically from walls, never persisted directly ──
 
-/** Node kind, determined by how many edges meet there. */
-export type NodeType = "L" | "T" | "cross" | "end";
+/**
+ * Node kind, from how many edges meet there and — for degree 2 — whether they
+ * actually turn. 'straight-join' is the seam where one physical wall was drawn
+ * as two collinear segments: it is NOT a corner, and treating it as one costs a
+ * phantom corner panel, its clamps, and 60cm of tileable run.
+ */
+export type NodeType = "L" | "T" | "cross" | "end" | "straight-join";
 
 /**
  * Concave ('inner', e.g. the notch of an L-shaped room) vs convex ('outer',
@@ -67,8 +91,36 @@ export interface Node {
   id: string;
   point: Point;
   type: NodeType;
-  /** set by the geometry layer for classifiable 'L' nodes; see CornerSide. */
+  /**
+   * Set for 'L' nodes that bound exactly one room region.
+   * @deprecated Corners that bound two rooms have a different side per room —
+   * read CornerAtNode (geometry/classifyCornerSides) for the full truth. Kept
+   * populated for the single-region case.
+   */
   cornerSide?: CornerSide;
+  /** e.g. "unresolved-corner-side", "multi-region-corner", "degenerate-turn" */
+  flags: string[];
+}
+
+/**
+ * One corner of one region. A node where two walls meet is a corner of every
+ * region that wraps around it, and a corner between two rooms is genuinely two
+ * corners: each room gets its own corner panel, and the two can even differ in
+ * side. This — not Node.cornerSide — is the corners layer's real input.
+ */
+export interface CornerAtNode {
+  /** `corner:${nodeId}:${regionId}` — also the groupId of the panel placed here */
+  id: string;
+  nodeId: string;
+  regionId: string;
+  /** the boundary cycle this corner was measured on */
+  cycleId: string;
+  edgeAId: string;
+  edgeBId: string;
+  side: CornerSide;
+  /** the region's own angle at this node: < 180 is convex, > 180 is concave */
+  interiorAngleDeg: number;
+  flags: string[];
 }
 
 /** A segment between two graph nodes, belonging to one wall. */
@@ -85,9 +137,83 @@ export interface Edge {
   flags: string[];
 }
 
+// ── Resolved geometry (contours layer) ──
+
+/**
+ * Perpendicular direction relative to a wall's own A→B, in the (dy,-dx) frame
+ * used everywhere: +1 is the right-hand perpendicular. The contours layer
+ * derives it from the wall loop rather than from the drag direction.
+ */
+export type OutwardSign = 1 | -1;
+
+export interface ResolvedWallFace {
+  id: PlacementSide;
+  line: [Point, Point];
+  /** the face borders a room, so it carries full tiling and corner panels */
+  isInterior: boolean;
+  regionId: string;
+  /** set when the user actually drew a wall for this face (two-contour plans) */
+  sourceWallId?: string;
+}
+
+/**
+ * One physical wall with both faces resolved. On a plan traced as two contours
+ * the two drawn walls collapse into one of these, and the second one's id lands
+ * in `consumedWallIds` so it is never tiled again in its own right.
+ */
+export interface ResolvedWall {
+  /** equals the primary source wall id, so edge ids stay `edge:${id}` */
+  id: string;
+  pourId: string;
+  sourceWallId: string;
+  consumedWallIds: string[];
+  /** the primary source wall's innerLine, verbatim */
+  centerline: [Point, Point];
+  thickness: number;
+  thicknessSource: "measured" | "declared";
+  /** direction from face A to face B */
+  outwardSign: OutwardSign;
+  faces: [ResolvedWallFace, ResolvedWallFace];
+  flags: string[];
+}
+
+export interface Diagnostic {
+  code: string;
+  severity: "info" | "warning" | "error";
+  /** Hebrew, rendered verbatim in the UI */
+  message: string;
+  wallIds: string[];
+  nodeIds: string[];
+}
+
+/** Just enough of a Region for the UI; the boundary cycles stay in the engine. */
+export interface RegionSummary {
+  id: string;
+  kind: "outside" | "wall-material" | "room" | "ambiguous";
+  area: number;
+}
+
+/** Everything the engine derived on the last compute. */
+export interface ProjectLayout {
+  nodes: Node[];
+  edges: Edge[];
+  resolvedWalls: ResolvedWall[];
+  regions: RegionSummary[];
+  corners: CornerAtNode[];
+  diagnostics: Diagnostic[];
+  /** bump to invalidate layouts saved by an older engine */
+  engineVersion: number;
+}
+
 // ── Layout result ──
 
-export type PlacementSide = "inner" | "outer";
+/**
+ * Which face of the wall a placement sits on. 'faceA' is the drawn wall's own
+ * innerLine; 'faceB' is the opposite face. Whether a face borders a room is a
+ * SEPARATE question, answered by `faceIsInterior` — conflating the two is what
+ * produced panels stacked twice on one side and none on the other.
+ */
+export type PlacementSide = "faceA" | "faceB";
 export type PlacementKind = "panel" | "corner-panel" | "timber";
 /** 'manual' placements were hand-edited and are colored differently in the UI. */
 export type PlacementSource = "auto" | "manual";
@@ -96,8 +222,12 @@ export type PlacementSource = "auto" | "manual";
 export interface Placement {
   id: string;
   edgeId: string;
+  /** the ResolvedWall this sits on; the canvas resolves its render frame from this */
+  wallId: string;
   pourId: string;
   side: PlacementSide;
+  /** true when this face borders a room: full tiling and a corner panel, no overlap strip */
+  faceIsInterior: boolean;
   kind: PlacementKind;
   /** catalog panel type id, e.g. "R75", "C30x30" */
   panelType: string;

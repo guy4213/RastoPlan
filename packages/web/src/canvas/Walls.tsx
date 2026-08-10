@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { Circle, Group, Line, Text } from "react-konva";
 import type Konva from "konva";
-import type { Point, Pour, Wall } from "@rastoplan/core";
+import type { Point, Pour, ProjectLayout, Wall } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
 import { ENDPOINT_SNAP_PIXELS, applyAxisLock, findEndpointSnapTarget, formatLength, snapEndpoint, wallNormal } from "./geometry.js";
+import { resolvedWallFrame } from "./resolvedWallFrame.js";
 
 interface Props {
   walls: Wall[];
   pours: Pour[];
+  layout: ProjectLayout | undefined;
   selectedWallId: string | null;
   selectedWallIds: string[];
   scale: number;
@@ -19,7 +21,7 @@ function pourColor(pours: Pour[], pourId: string): string {
   return pours.find((p) => p.id === pourId)?.color ?? "#475569";
 }
 
-export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, onSelect, onContextMenu }: Props) {
+export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, scale, onSelect, onContextMenu }: Props) {
   const { state, dispatch } = useProject();
   const draggable = state.ui.tool === "select";
   const selectedSet = new Set(selectedWallIds);
@@ -36,8 +38,12 @@ export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, on
         const selected = selectedSet.has(wall.id) || isPrimary;
         const [a, b]: [Point, Point] = wall.innerLine;
         const n = wallNormal(wall);
-        const outerA = { x: a.x + n.x * wall.thickness, y: a.y + n.y * wall.thickness };
-        const outerB = { x: b.x + n.x * wall.thickness, y: b.y + n.y * wall.thickness };
+        const frame = resolvedWallFrame(wall, layout);
+        // Offset in the RESOLVED outward direction, not blindly along +normal:
+        // on a wall drawn the other way round the far face is on the other side.
+        const push = frame.thickness * frame.outwardSign;
+        const outerA = { x: a.x + n.x * push, y: a.y + n.y * push };
+        const outerB = { x: b.x + n.x * push, y: b.y + n.y * push };
 
         // Other walls act as endpoint-snap sources; we exclude the current
         // wall so its own endpoints don't interfere with dragging it.
@@ -94,17 +100,22 @@ export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, on
                 points={[a.x, a.y, b.x, b.y]}
                 stroke={color}
                 strokeWidth={selected ? 6 / scale : 4 / scale}
-                opacity={selected ? 1 : 0.9}
+                opacity={frame.isConsumed ? 0.45 : selected ? 1 : 0.9}
+                dash={frame.isConsumed ? [10 / scale, 6 / scale] : undefined}
                 hitStrokeWidth={16 / scale}
               />
-              <Line
-                points={[outerA.x, outerA.y, outerB.x, outerB.y]}
-                stroke={color}
-                strokeWidth={1.5 / scale}
-                dash={[6 / scale, 4 / scale]}
-                opacity={0.4}
-                listening={false}
-              />
+              {/* A consumed wall IS the far face of its partner — drawing a
+                  second face for it would double the line already there. */}
+              {!frame.isConsumed && (
+                <Line
+                  points={[outerA.x, outerA.y, outerB.x, outerB.y]}
+                  stroke={color}
+                  strokeWidth={1.5 / scale}
+                  dash={[6 / scale, 4 / scale]}
+                  opacity={0.4}
+                  listening={false}
+                />
+              )}
             </Group>
 
             {isPrimary && draggable && (
@@ -139,6 +150,7 @@ export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, on
             )}
             <WallLengthLabel
               wall={wall}
+              outwardSign={frame.outwardSign}
               scale={scale}
               units={units}
               highlight={selected}
@@ -152,18 +164,20 @@ export function Walls({ walls, pours, selectedWallId, selectedWallIds, scale, on
 }
 
 /**
- * Length text centred on the wall, offset onto the outer side by the
- * wall's normal so it doesn't clip the stroke. Rotated to match the
- * wall's angle so long labels stay readable at any orientation.
+ * Length text centred on the wall, pushed onto the OUTSIDE by the resolved
+ * outward direction so it lands in free space instead of inside the room.
+ * Rotated to match the wall's angle so long labels stay readable.
  */
 function WallLengthLabel({
   wall,
+  outwardSign,
   scale,
   units,
   highlight,
   hidden,
 }: {
   wall: Wall;
+  outwardSign: 1 | -1;
   scale: number;
   units: "cm" | "m";
   highlight: boolean;
@@ -179,9 +193,7 @@ function WallLengthLabel({
   const midY = (a.y + b.y) / 2;
   const nx = dy / lengthCm;
   const ny = -dx / lengthCm;
-  // Push the label onto the outer (positive normal) side, past the
-  // outer-face dashed line, so it sits in the free space.
-  const push = wall.thickness + 12 / scale;
+  const push = (wall.thickness + 12 / scale) * outwardSign;
   const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
   // Keep text upright — if the wall points to the left half, flip so
   // the text isn't read upside-down.

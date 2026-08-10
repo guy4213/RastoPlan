@@ -1,58 +1,91 @@
-import type { Placement, Project } from "../types.js";
-import { buildGraph } from "../geometry/buildGraph.js";
-import { classifyNodes } from "../geometry/classifyNodes.js";
-import { classifyCornerSides } from "../geometry/classifyCornerSides.js";
+import type { Placement, Project, ProjectLayout, RegionSummary } from "../types.js";
+import { resolveWalls } from "../contours/resolveWalls.js";
+import type { ResolveOptions } from "../contours/constants.js";
 import { tileWall } from "../tiling/tileWall.js";
 import { placeCornerPanels } from "./placeCornerPanels.js";
-import { syncOuterPlacements } from "./syncOuterPlacements.js";
+import { syncFacePlacements } from "./syncFacePlacements.js";
+
+/** Bump when a change makes previously saved layouts wrong rather than merely stale. */
+export const ENGINE_VERSION = 2;
+
+export interface TileProjectResult {
+  placements: Placement[];
+  layout: ProjectLayout;
+}
 
 /**
- * Runs the full corners+tiling pipeline for a project and returns the
- * complete Placement set (inner + outer + corners), marked with `side` and
- * `kind` so downstream layers can filter/render them.
+ * Runs the full contours+corners+tiling pipeline and returns the complete
+ * placement set plus the derived layout.
  *
  * Pipeline:
- *   1. buildGraph → classifyNodes → classifyCornerSides.
- *   2. placeCornerPanels: emits a C30x30 on the inner face at every L corner,
- *      overlap markers at outer corners, and returns edges with clearLength
- *      recomputed for the real corner rules (not computeClearLengths's
- *      placeholder).
- *   3. For each edge: tileWall(clearLength) → straight-run inner placements.
- *   4. syncOuterPlacements: mirrors the straight inner tiling onto the outer
- *      face at identical offsets (Dywidag alignment). Corner panels stay
- *      inner-only and outer-only overlap markers are appended separately.
+ *   1. resolveWalls: face traversal → regions → contour pairing. Decides what
+ *      is a room, what is wall material, which way is out, and which drawn
+ *      walls were only the far face of another wall.
+ *   2. placeCornerPanels: a corner panel per room per corner, on the face that
+ *      borders that room; overlap strips only on faces that border no room.
+ *   3. Per resolved wall: tileWall on face A, mirrored onto face B at identical
+ *      offsets for Dywidag alignment.
  *
- * The step-2 clearLength recompute is why we don't call computeClearLengths
- * inside this pipeline — it would apply the placeholder deduction the
- * corners layer is precisely replacing.
+ * Consumed walls are never tiled — that is what stops a plan traced as two
+ * rectangles from producing two independent, doubled-up wall sets.
  */
-export function tileProject(project: Project): Placement[] {
+export function tileProject(project: Project, options: ResolveOptions = {}): TileProjectResult {
   const { walls, catalog, rules } = project;
-  const wallById = new Map(walls.map((w) => [w.id, w]));
 
-  const { nodes: rawNodes, edges: rawEdges } = buildGraph(walls);
-  const typedNodes = classifyNodes(rawNodes, rawEdges);
-  const classifiedNodes = classifyCornerSides(typedNodes, rawEdges);
+  const resolution = resolveWalls(walls, options);
+  const corners = placeCornerPanels({ resolution, walls, catalog, rules });
 
-  const corners = placeCornerPanels(classifiedNodes, rawEdges, walls, catalog, rules);
+  const edgeById = new Map(corners.edges.map((e) => [e.id, e]));
+  const placements: Placement[] = [];
+  const diagnostics = [...resolution.diagnostics];
 
-  const allPlacements: Placement[] = [];
-  for (const edge of corners.edges) {
-    const wall = wallById.get(edge.wallId);
-    if (!wall) continue;
+  for (const resolvedWall of resolution.resolvedWalls) {
+    const edge = edgeById.get(`edge:${resolvedWall.id}`);
+    if (!edge) continue;
 
-    // Only the straight run is mirrored: the outer face carries straight
-    // panels plus an overlap at the corner, never a corner panel. Dywidag
-    // alignment is asserted over that shared straight run.
-    const innerCorners = corners.innerCornerPanels.filter((p) => p.edgeId === edge.id);
-    const innerTiles = tileWall(edge, wall.pourId, catalog, rules);
+    const [faceA, faceB] = resolvedWall.faces;
+    const tiles = tileWall(
+      edge,
+      {
+        wallId: resolvedWall.id,
+        pourId: resolvedWall.pourId,
+        side: faceA.id,
+        faceIsInterior: faceA.isInterior,
+      },
+      catalog,
+      rules
+    );
 
-    const outerSide = syncOuterPlacements(innerTiles);
-
-    const outerProtrusions = corners.outerCornerProtrusions.filter((p) => p.edgeId === edge.id);
-
-    allPlacements.push(...innerCorners, ...innerTiles, ...outerSide, ...outerProtrusions);
+    placements.push(
+      ...corners.cornerPanels.filter((p) => p.edgeId === edge.id),
+      ...tiles,
+      ...syncFacePlacements(tiles, faceB.id, faceB.isInterior),
+      ...corners.protrusions.filter((p) => p.edgeId === edge.id)
+    );
   }
 
-  return allPlacements;
+  const layout: ProjectLayout = {
+    nodes: resolution.nodes,
+    // Consumed edges are dropped: every accessory counter reads this list as
+    // "walls that need formwork", and a wall that was only the far face of
+    // another one would otherwise be counted a second time for struts.
+    edges: corners.edges.filter((e) => resolution.wallByEdgeId.has(e.id)),
+    resolvedWalls: resolution.resolvedWalls,
+    regions: resolution.regions.map(
+      (r): RegionSummary => ({ id: r.id, kind: r.kind, area: r.area })
+    ),
+    corners: resolution.corners,
+    diagnostics,
+    engineVersion: ENGINE_VERSION,
+  };
+
+  return { placements, layout };
+}
+
+/** Back-compat shim for callers that only want the placements. */
+export function tileProjectPlacements(
+  project: Project,
+  options: ResolveOptions = {}
+): Placement[] {
+  return tileProject(project, options).placements;
 }

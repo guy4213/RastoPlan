@@ -51,9 +51,8 @@ export function countAccessories(
 }
 
 /**
- * Panel-to-panel joints on the INNER face only. The outer face is a synced
- * mirror of the inner (same offsets by construction) — counting both sides
- * would double every physical seam.
+ * Panel-to-panel joints on face A only. Face B is a synced mirror at identical
+ * offsets by construction, so counting both would double every physical seam.
  */
 export function countStraightJoints(placements: Placement[]): number {
   let total = 0;
@@ -69,7 +68,7 @@ export function countStraightJoints(placements: Placement[]): number {
 export function straightJointsByEdge(placements: Placement[]): Map<string, number> {
   const byEdge = new Map<string, Placement[]>();
   for (const p of placements) {
-    if (p.side !== "inner") continue;
+    if (p.side !== "faceA") continue;
     const arr = byEdge.get(p.edgeId) ?? [];
     arr.push(p);
     byEdge.set(p.edgeId, arr);

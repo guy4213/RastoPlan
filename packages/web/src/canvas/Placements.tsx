@@ -1,13 +1,15 @@
 import { useMemo } from "react";
 import { Group, Line, Text } from "react-konva";
 import type Konva from "konva";
-import type { Placement, Wall } from "@rastoplan/core";
+import type { Placement, ProjectLayout, Wall } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
 import { placementCorners, wallDirection, wallNormal } from "./geometry.js";
+import { resolvedWallFrame } from "./resolvedWallFrame.js";
 
 interface Props {
   walls: Wall[];
   placements: Placement[];
+  layout: ProjectLayout | undefined;
   selectedPlacementId: string | null;
   scale: number;
   onSelect: (placementId: string | null) => void;
@@ -27,7 +29,9 @@ function colorsFor(placement: Placement): Colors {
   if (placement.flags.includes("outer-corner-protrusion")) return { fill: "#e0e7ff", stroke: "#4f46e5", text: "#3730a3" };
   if (placement.kind === "timber") return { fill: "#fde68a", stroke: "#a16207", text: "#713f12" };
   if (placement.kind === "corner-panel") return { fill: "#cffafe", stroke: "#0e7490", text: "#155e75" };
-  if (placement.side === "outer") return { fill: "#dbeafe", stroke: "#1d4ed8", text: "#1e3a8a" };
+  // Green reads as "faces a room", blue as "faces the outside" — so a
+  // partition between two rooms comes out green on both faces.
+  if (!placement.faceIsInterior) return { fill: "#dbeafe", stroke: "#1d4ed8", text: "#1e3a8a" };
   return { fill: "#dcfce7", stroke: "#15803d", text: "#14532d" };
 }
 
@@ -61,7 +65,15 @@ function snapToTargets(offset: number, targets: number[], snapCm: number): numbe
   return best;
 }
 
-export function Placements({ walls, placements, selectedPlacementId, scale, onSelect, onContextMenu }: Props) {
+export function Placements({
+  walls,
+  placements,
+  layout,
+  selectedPlacementId,
+  scale,
+  onSelect,
+  onContextMenu,
+}: Props) {
   const { dispatch } = useProject();
   const wallById = useMemo(() => new Map(walls.map((w) => [w.id, w])), [walls]);
   const depth = 8; // cm of visual thickness for the band
@@ -69,11 +81,16 @@ export function Placements({ walls, placements, selectedPlacementId, scale, onSe
   return (
     <>
       {placements.map((placement) => {
-        const wall = wallById.get(placement.edgeId.replace(/^edge:/, ""));
+        const wall = wallById.get(placement.wallId);
         if (!wall) return null;
 
-        const sideSign: 1 | -1 = placement.side === "outer" ? 1 : -1;
-        const baseOffset = placement.side === "outer" ? wall.thickness : 0;
+        const frame = resolvedWallFrame(wall, layout);
+        // Face B sits one wall thickness out along the resolved outward
+        // direction; face A sits on the centerline. Both bands then extend
+        // away from the wall body so they never overlap it.
+        const sideSign: 1 | -1 =
+          placement.side === "faceB" ? frame.outwardSign : (-frame.outwardSign as 1 | -1);
+        const baseOffset = placement.side === "faceB" ? frame.thickness * frame.outwardSign : 0;
         const dir = wallDirection(wall);
         const n = wallNormal(wall);
 

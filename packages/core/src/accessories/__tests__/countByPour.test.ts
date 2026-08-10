@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
-import { buildGraph } from "../../geometry/buildGraph.js";
-import { classifyNodes } from "../../geometry/classifyNodes.js";
-import { classifyCornerSides } from "../../geometry/classifyCornerSides.js";
+import { DEFAULT_ACCESSORY_RULES } from "../../defaults.js";
 import { rectangleWalls } from "../../geometry/__tests__/fixtures.js";
-import { placeCornerPanels } from "../../corners/placeCornerPanels.js";
 import { tileProject } from "../../corners/tileProject.js";
 import { countAccessoriesByPour, countPanelsByPour } from "../countByPour.js";
 import { projectOf, twoPourWalls } from "./fixtures.js";
@@ -12,20 +8,10 @@ import { projectOf, twoPourWalls } from "./fixtures.js";
 describe("countAccessoriesByPour — single-pour project", () => {
   it("puts the whole count under the single pour, matching the ungrouped total (except craneAdapters)", () => {
     const walls = rectangleWalls();
-    const project = projectOf(walls);
-    const placements = tileProject(project);
-    const { nodes, edges } = buildGraph(walls);
-    const classified = classifyCornerSides(classifyNodes(nodes, edges), edges);
-    const corners = placeCornerPanels(
-      classified,
-      edges,
-      walls,
-      DEFAULT_PANEL_CATALOG,
-      DEFAULT_ACCESSORY_RULES
-    );
+    const { placements, layout } = tileProject(projectOf(walls));
     const byPour = countAccessoriesByPour(
       placements,
-      corners.edges,
+      layout.edges,
       walls,
       DEFAULT_ACCESSORY_RULES
     );
@@ -49,20 +35,10 @@ describe("countAccessoriesByPour — single-pour project", () => {
 describe("countAccessoriesByPour — two-pour project", () => {
   it("each pour carries its own struts (sum matches project total)", () => {
     const { walls, pours } = twoPourWalls();
-    const project = projectOf(walls, pours);
-    const placements = tileProject(project);
-    const { nodes, edges } = buildGraph(walls);
-    const classified = classifyCornerSides(classifyNodes(nodes, edges), edges);
-    const corners = placeCornerPanels(
-      classified,
-      edges,
-      walls,
-      DEFAULT_PANEL_CATALOG,
-      DEFAULT_ACCESSORY_RULES
-    );
+    const { placements, layout } = tileProject(projectOf(walls, pours));
     const byPour = countAccessoriesByPour(
       placements,
-      corners.edges,
+      layout.edges,
       walls,
       DEFAULT_ACCESSORY_RULES
     );
@@ -78,20 +54,10 @@ describe("countAccessoriesByPour — two-pour project", () => {
 
   it("byPour.cornerClamps + byPour.straightClamps + byPour.struts sum to project totals", () => {
     const { walls, pours } = twoPourWalls();
-    const project = projectOf(walls, pours);
-    const placements = tileProject(project);
-    const { nodes, edges } = buildGraph(walls);
-    const classified = classifyCornerSides(classifyNodes(nodes, edges), edges);
-    const corners = placeCornerPanels(
-      classified,
-      edges,
-      walls,
-      DEFAULT_PANEL_CATALOG,
-      DEFAULT_ACCESSORY_RULES
-    );
+    const { placements, layout } = tileProject(projectOf(walls, pours));
     const byPour = countAccessoriesByPour(
       placements,
-      corners.edges,
+      layout.edges,
       walls,
       DEFAULT_ACCESSORY_RULES
     );
@@ -115,8 +81,7 @@ describe("countAccessoriesByPour — two-pour project", () => {
 describe("countPanelsByPour", () => {
   it("splits panel counts per pour, and byPour sums match the project total per type", () => {
     const { walls, pours } = twoPourWalls();
-    const project = projectOf(walls, pours);
-    const placements = tileProject(project);
+    const { placements } = tileProject(projectOf(walls, pours));
 
     const byPour = countPanelsByPour(placements, walls);
     expect(byPour.byPour["pour-A"]).toBeDefined();

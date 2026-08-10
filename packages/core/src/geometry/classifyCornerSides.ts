@@ -1,99 +1,119 @@
-import type { Edge, Node } from "../types.js";
-import { cross2, signedArea, subtract } from "./vector.js";
+import type { CornerAtNode, CornerSide, Node, Point } from "../types.js";
+import type { Dart, PlanarFacesResult } from "./planarFaces.js";
+import { cross2, subtract } from "./vector.js";
 
-interface Neighbor {
-  edgeId: string;
-  otherNodeId: string;
+export interface CornerRegionLookup {
+  /** boundary cycle id → the region it bounds; cycles absent here are skipped */
+  regionIdByCycleId: Map<string, string>;
+  /** only these regions produce corners — wall material and the exterior don't */
+  roomRegionIds: Set<string>;
+}
+
+export interface ClassifyCornerSidesResult {
+  nodes: Node[];
+  corners: CornerAtNode[];
 }
 
 /**
- * For each 'L' node that sits on a fully closed loop of 'L' nodes, decides
- * whether it's concave ('inner' — e.g. the notch of an L-shaped room) or
- * convex ('outer' — e.g. a regular box corner), by comparing the local turn
- * at that node to the loop's overall winding direction (shoelace sign).
- * This works regardless of coordinate convention or which way the loop was
- * traced, since both signs come from the same coordinates.
+ * Decides, for every room a corner belongs to, whether that corner is concave
+ * ('inner' — the notch of an L-shaped room) or convex ('outer' — a regular box
+ * corner), by comparing the local turn to the bounding cycle's winding.
  *
- * 'L' nodes that aren't part of a closed loop (e.g. a chain that runs into
- * a T/cross/end before returning to its start) are left unclassified —
- * there's no enclosed area to determine a side from.
+ * Runs on the planar face traversal rather than on a hand-rolled loop walk, so
+ * it no longer gives up the moment a T or cross junction appears: an interior
+ * partition splits a room into two faces and each face classifies its own
+ * corners. Corners that genuinely can't be resolved are flagged on the Node —
+ * the previous implementation returned them silently classified as 'inner'.
+ *
+ * With no `lookup`, every bounded face is treated as its own room, which is the
+ * right default before the contours layer has decided what is wall material.
  */
-export function classifyCornerSides(nodes: Node[], edges: Edge[]): Node[] {
+export function classifyCornerSides(
+  nodes: Node[],
+  faces: PlanarFacesResult,
+  lookup?: CornerRegionLookup
+): ClassifyCornerSidesResult {
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
-  const adjacency = buildAdjacency(edges);
-  const cornerSideById = new Map<string, "inner" | "outer">();
+  const edgeIdByDartId = new Map(
+    [...faces.darts.values()].map((d) => [d.id, d.edgeId] as const)
+  );
 
-  for (const node of nodes) {
-    if (node.type !== "L" || cornerSideById.has(node.id)) continue;
+  const corners: CornerAtNode[] = [];
+  const seen = new Set<string>();
 
-    const loop = traceLoop(node.id, adjacency, nodeById);
-    if (!loop) continue;
+  for (const cycle of faces.cycles) {
+    if (cycle.isUnbounded) continue;
 
-    const area = signedArea(loop.map((id) => nodeById.get(id)!.point));
-    for (let i = 0; i < loop.length; i++) {
-      const id = loop[i]!;
-      const loopNode = nodeById.get(id)!;
-      if (loopNode.type !== "L") continue;
+    const regionId = lookup ? lookup.regionIdByCycleId.get(cycle.id) : cycle.id;
+    if (!regionId) continue;
+    if (lookup && !lookup.roomRegionIds.has(regionId)) continue;
 
-      const prev = nodeById.get(loop[(i - 1 + loop.length) % loop.length]!)!.point;
-      const curr = loopNode.point;
-      const next = nodeById.get(loop[(i + 1) % loop.length]!)!.point;
-      const turn = cross2(subtract(curr, prev), subtract(next, curr));
+    const areaSign = Math.sign(cycle.signedArea);
+    const count = cycle.dartIds.length;
 
-      cornerSideById.set(id, Math.sign(turn) === Math.sign(area) ? "outer" : "inner");
+    for (let i = 0; i < count; i++) {
+      const node = nodeById.get(cycle.nodeIds[i]!);
+      if (!node || node.type !== "L") continue;
+
+      const incoming = faces.darts.get(cycle.dartIds[(i - 1 + count) % count]!)!;
+      const outgoing = faces.darts.get(cycle.dartIds[i]!)!;
+      const dirIn = directionOf(incoming, nodeById);
+      const dirOut = directionOf(outgoing, nodeById);
+      if (!dirIn || !dirOut) continue;
+
+      const id = `corner:${node.id}:${regionId}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+
+      const turn = cross2(dirIn, dirOut);
+      const turnDeg = (Math.atan2(turn, dirIn.x * dirOut.x + dirIn.y * dirOut.y) * 180) / Math.PI;
+
+      corners.push({
+        id,
+        nodeId: node.id,
+        regionId,
+        cycleId: cycle.id,
+        edgeAId: edgeIdByDartId.get(incoming.id)!,
+        edgeBId: edgeIdByDartId.get(outgoing.id)!,
+        side: Math.sign(turn) === areaSign ? "outer" : "inner",
+        interiorAngleDeg: 180 - areaSign * turnDeg,
+        flags: [],
+      });
     }
   }
 
-  return nodes.map((node) =>
-    cornerSideById.has(node.id) ? { ...node, cornerSide: cornerSideById.get(node.id) } : node
-  );
+  return { nodes: annotateNodes(nodes, corners), corners };
 }
 
-function buildAdjacency(edges: Edge[]): Map<string, Neighbor[]> {
-  const adjacency = new Map<string, Neighbor[]>();
-  const add = (nodeId: string, neighbor: Neighbor) => {
-    const list = adjacency.get(nodeId) ?? [];
-    list.push(neighbor);
-    adjacency.set(nodeId, list);
-  };
-  for (const edge of edges) {
-    add(edge.nodeA, { edgeId: edge.id, otherNodeId: edge.nodeB });
-    add(edge.nodeB, { edgeId: edge.id, otherNodeId: edge.nodeA });
+function annotateNodes(nodes: Node[], corners: CornerAtNode[]): Node[] {
+  const byNodeId = new Map<string, CornerAtNode[]>();
+  for (const corner of corners) {
+    byNodeId.set(corner.nodeId, [...(byNodeId.get(corner.nodeId) ?? []), corner]);
   }
-  return adjacency;
+
+  return nodes.map((node) => {
+    if (node.type !== "L") return node;
+    const found = byNodeId.get(node.id) ?? [];
+
+    if (found.length === 0) {
+      return { ...node, cornerSide: undefined, flags: withFlag(node.flags, "unresolved-corner-side") };
+    }
+    if (found.length > 1) {
+      return { ...node, cornerSide: undefined, flags: withFlag(node.flags, "multi-region-corner") };
+    }
+    return { ...node, cornerSide: found[0]!.side as CornerSide };
+  });
 }
 
-/**
- * Walks from `startId` through consecutive 'L' nodes until it returns to
- * the start (closed loop — returns the ordered node ids) or reaches a
- * non-'L' node (open chain — returns null).
- */
-function traceLoop(
-  startId: string,
-  adjacency: Map<string, Neighbor[]>,
-  nodeById: Map<string, Node>
-): string[] | null {
-  const startNeighbors = adjacency.get(startId) ?? [];
-  if (startNeighbors.length !== 2) return null;
+function directionOf(dart: Dart, nodeById: Map<string, Node>): Point | null {
+  const from = nodeById.get(dart.from);
+  const to = nodeById.get(dart.to);
+  if (!from || !to) return null;
+  const d = subtract(to.point, from.point);
+  return d.x === 0 && d.y === 0 ? null : d;
+}
 
-  const path: string[] = [startId];
-  let prevId = startId;
-  let currId = startNeighbors[0]!.otherNodeId;
-
-  while (currId !== startId) {
-    const currNode = nodeById.get(currId);
-    if (!currNode || currNode.type !== "L") return null;
-
-    path.push(currId);
-    const neighbors = adjacency.get(currId) ?? [];
-    if (neighbors.length !== 2) return null;
-
-    const next = neighbors.find((n) => n.otherNodeId !== prevId);
-    if (!next) return null;
-
-    prevId = currId;
-    currId = next.otherNodeId;
-  }
-
-  return path;
+function withFlag(flags: string[] | undefined, flag: string): string[] {
+  const current = flags ?? [];
+  return current.includes(flag) ? current : [...current, flag];
 }

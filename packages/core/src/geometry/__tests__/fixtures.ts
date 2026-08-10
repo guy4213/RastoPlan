@@ -80,3 +80,132 @@ export function tJunctionWalls(): Wall[] {
     makeWall("partition", { x: 200, y: 0 }, { x: 200, y: 150 }, 20),
   ];
 }
+
+/**
+ * THE CUSTOMER'S DRAWING. The same 400x300 room, but traced the way it appears
+ * in AutoCAD: an inner rectangle AND an outer rectangle 20cm out, both drawn as
+ * walls. 8 walls, two disconnected components, one physical wall ring.
+ */
+export function doubleContourRoomWalls(): Wall[] {
+  return [
+    makeWall("in-bottom", { x: 0, y: 0 }, { x: 400, y: 0 }, 20),
+    makeWall("in-right", { x: 400, y: 0 }, { x: 400, y: 300 }, 20),
+    makeWall("in-top", { x: 400, y: 300 }, { x: 0, y: 300 }, 20),
+    makeWall("in-left", { x: 0, y: 300 }, { x: 0, y: 0 }, 20),
+    makeWall("out-bottom", { x: -20, y: -20 }, { x: 420, y: -20 }, 20),
+    makeWall("out-right", { x: 420, y: -20 }, { x: 420, y: 320 }, 20),
+    makeWall("out-top", { x: 420, y: 320 }, { x: -20, y: 320 }, 20),
+    makeWall("out-left", { x: -20, y: 320 }, { x: -20, y: -20 }, 20),
+  ];
+}
+
+/**
+ * The same drawing with two of the eight walls dragged the other way. The
+ * resolved outward direction must come out identical — this is the regression
+ * fixture for the outward sign having been read off each wall's own A→B drag
+ * direction instead of the loop it belongs to.
+ */
+export function doubleContourRoomWallsMixedDirection(): Wall[] {
+  return doubleContourRoomWalls().map((wall) =>
+    wall.id === "in-top" || wall.id === "out-right"
+      ? { ...wall, innerLine: [wall.innerLine[1], wall.innerLine[0]] as [Point, Point] }
+      : wall
+  );
+}
+
+/**
+ * A 400x300 room split by a full-height partition at x=200. The perimeter is
+ * split at the two T junctions so the graph has real nodes there: 6 perimeter
+ * segments + 1 partition. Two room regions, 4 L corners, 2 T nodes.
+ */
+export function roomWithInteriorWallWalls(): Wall[] {
+  return [
+    makeWall("bottom-left", { x: 0, y: 0 }, { x: 200, y: 0 }, 20),
+    makeWall("bottom-right", { x: 200, y: 0 }, { x: 400, y: 0 }, 20),
+    makeWall("right", { x: 400, y: 0 }, { x: 400, y: 300 }, 20),
+    makeWall("top-right", { x: 400, y: 300 }, { x: 200, y: 300 }, 20),
+    makeWall("top-left", { x: 200, y: 300 }, { x: 0, y: 300 }, 20),
+    makeWall("left", { x: 0, y: 300 }, { x: 0, y: 0 }, 20),
+    makeWall("partition", { x: 200, y: 0 }, { x: 200, y: 300 }, 20),
+  ];
+}
+
+/**
+ * A 600x300 room split by an L-shaped partition, so the partition has a real
+ * corner at (300,150) with a room on BOTH sides. That corner is convex for the
+ * small room and concave for the large one — one physical corner, two corner
+ * panels, and no overlap strip anywhere on it.
+ */
+export function lShapedPartitionWalls(): Wall[] {
+  return [
+    makeWall("p1", { x: 0, y: 0 }, { x: 300, y: 0 }, 20),
+    makeWall("p2", { x: 300, y: 0 }, { x: 600, y: 0 }, 20),
+    makeWall("p3", { x: 600, y: 0 }, { x: 600, y: 150 }, 20),
+    makeWall("p4", { x: 600, y: 150 }, { x: 600, y: 300 }, 20),
+    makeWall("p5", { x: 600, y: 300 }, { x: 0, y: 300 }, 20),
+    makeWall("p6", { x: 0, y: 300 }, { x: 0, y: 0 }, 20),
+    makeWall("q1", { x: 300, y: 0 }, { x: 300, y: 150 }, 20),
+    makeWall("q2", { x: 300, y: 150 }, { x: 600, y: 150 }, 20),
+  ];
+}
+
+/**
+ * rectangleWalls() with the bottom wall drawn as two collinear halves — the
+ * natural result of retracing a plan segment by segment. (200,0) is a straight
+ * join, NOT a corner: it must consume no corner panel and no corner clamps.
+ */
+export function collinearSplitWallWalls(): Wall[] {
+  return [
+    makeWall("bottom-left", { x: 0, y: 0 }, { x: 200, y: 0 }, 20),
+    makeWall("bottom-right", { x: 200, y: 0 }, { x: 400, y: 0 }, 20),
+    makeWall("right", { x: 400, y: 0 }, { x: 400, y: 300 }, 20),
+    makeWall("top", { x: 400, y: 300 }, { x: 0, y: 300 }, 20),
+    makeWall("left", { x: 0, y: 300 }, { x: 0, y: 0 }, 20),
+  ];
+}
+
+/**
+ * The L-shape drawn as two contours 20cm apart — exercises pairing around the
+ * concave notch, where the outer contour's corresponding vertex sits 20*sqrt(2)
+ * away rather than 20.
+ */
+export function doubleContourLShapeWalls(): Wall[] {
+  const inner: Point[] = [
+    { x: 0, y: 0 },
+    { x: 400, y: 0 },
+    { x: 400, y: 150 },
+    { x: 200, y: 150 },
+    { x: 200, y: 300 },
+    { x: 0, y: 300 },
+  ];
+  const outer: Point[] = [
+    { x: -20, y: -20 },
+    { x: 420, y: -20 },
+    { x: 420, y: 170 },
+    { x: 220, y: 170 },
+    { x: 220, y: 320 },
+    { x: -20, y: 320 },
+  ];
+  const ring = (points: Point[], prefix: string) =>
+    points.map((p, i) => makeWall(`${prefix}-${i}`, p, points[(i + 1) % points.length]!, 20));
+  return [...ring(inner, "in"), ...ring(outer, "out")];
+}
+
+/**
+ * A 1000x800 hall with a free-standing 300x200 room inside it, ~300cm clear all
+ * round. The two contours are nested but must NOT pair into a wall ring — this
+ * is what proves the plausible-thickness band actually gates the heuristic.
+ */
+export function nestedRoomsWalls(): Wall[] {
+  const ring = (a: Point, b: Point, prefix: string) =>
+    [
+      makeWall(`${prefix}-bottom`, { x: a.x, y: a.y }, { x: b.x, y: a.y }, 20),
+      makeWall(`${prefix}-right`, { x: b.x, y: a.y }, { x: b.x, y: b.y }, 20),
+      makeWall(`${prefix}-top`, { x: b.x, y: b.y }, { x: a.x, y: b.y }, 20),
+      makeWall(`${prefix}-left`, { x: a.x, y: b.y }, { x: a.x, y: a.y }, 20),
+    ];
+  return [
+    ...ring({ x: 0, y: 0 }, { x: 1000, y: 800 }, "hall"),
+    ...ring({ x: 350, y: 300 }, { x: 650, y: 500 }, "room"),
+  ];
+}

@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Wall } from "../../types.js";
 import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
-import { buildGraph } from "../../geometry/buildGraph.js";
-import { classifyNodes } from "../../geometry/classifyNodes.js";
-import { classifyCornerSides } from "../../geometry/classifyCornerSides.js";
 import { rectangleWalls } from "../../geometry/__tests__/fixtures.js";
-import { placeCornerPanels } from "../../corners/placeCornerPanels.js";
 import { tileProject } from "../../corners/tileProject.js";
 import { countAccessoriesByPour, countPanelsByPour } from "../../accessories/countByPour.js";
 import { projectOf, twoPourWalls } from "../../accessories/__tests__/fixtures.js";
@@ -23,16 +19,7 @@ function inputFor(walls: Wall[], pourIds: string[], pourNames: string[]): BuildB
     walls,
     pourIds.map((id, i) => ({ id, name: pourNames[i]!, color: "#000", order: i }))
   );
-  const placements = tileProject(project);
-  const { nodes, edges } = buildGraph(walls);
-  const classified = classifyCornerSides(classifyNodes(nodes, edges), edges);
-  const corners = placeCornerPanels(
-    classified,
-    edges,
-    walls,
-    DEFAULT_PANEL_CATALOG,
-    DEFAULT_ACCESSORY_RULES
-  );
+  const { placements, layout } = tileProject(project);
 
   return {
     header,
@@ -40,7 +27,7 @@ function inputFor(walls: Wall[], pourIds: string[], pourNames: string[]): BuildB
     pourIds,
     pourNames,
     panels: countPanelsByPour(placements, walls),
-    accessories: countAccessoriesByPour(placements, corners.edges, walls, DEFAULT_ACCESSORY_RULES),
+    accessories: countAccessoriesByPour(placements, layout.edges, walls, DEFAULT_ACCESSORY_RULES),
   };
 }
 

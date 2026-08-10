@@ -1,5 +1,11 @@
-import type { Pour, Project, Wall, Placement, Point } from "@rastoplan/core";
-import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG, tileProject } from "@rastoplan/core";
+import type { Pour, Project, Wall, Placement, Point, QuantityOverrides } from "@rastoplan/core";
+import {
+  CURRENT_SCHEMA_VERSION,
+  DEFAULT_ACCESSORY_RULES,
+  DEFAULT_PANEL_CATALOG,
+  migrateProject,
+  tileProject,
+} from "@rastoplan/core";
 
 export type Tool = "select" | "draw-wall" | "weld";
 
@@ -51,6 +57,7 @@ export function initialProject(id: string): Project {
     pours: [defaultPour],
     walls: [],
     placements: [],
+    schemaVersion: CURRENT_SCHEMA_VERSION,
   };
 }
 
@@ -91,17 +98,32 @@ export type Action =
   | { type: "compute" }
   | { type: "update-placement"; placementId: string; patch: Partial<Placement> }
   | { type: "delete-placement"; placementId: string }
-  | { type: "insert-placement"; placement: Placement };
+  | { type: "insert-placement"; placement: Placement }
+  | {
+      type: "set-quantity-override";
+      field: keyof QuantityOverrides;
+      pourId: string;
+      value: number | null;
+    };
 
 function withUpdatedAt(project: Project): Project {
   return { ...project, updatedAt: nowIso() };
 }
 
 /**
- * The outer-face mate of a placement — the one produced by
- * syncOuterPlacements when the layout was computed. Match on same edge,
- * same type/width/offset, opposite side, and matching kind, excluding
- * outer-only protrusion markers (they have no inner twin by design).
+ * Drops everything the engine derived. Any edit to the walls invalidates the
+ * whole resolution — which contour is wall material, which way is out — not
+ * just the placements, so the two are always cleared together.
+ */
+function withClearedLayout(project: Project): Project {
+  return { ...project, placements: [], layout: undefined };
+}
+
+/**
+ * The opposite-face mate of a placement — the one produced by
+ * syncFacePlacements when the layout was computed. Match on same edge,
+ * same type/width/offset, opposite face, and matching kind, excluding
+ * the corner overlap markers (they have no mate by design).
  */
 function findSyncTwin(target: Placement, all: Placement[]): Placement | undefined {
   if (target.flags.includes("outer-corner-protrusion")) return undefined;
@@ -122,7 +144,9 @@ export function reduce(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "load-project":
       return {
-        project: action.project,
+        // The single choke point where saved blobs enter, so nothing
+        // downstream ever sees a pre-contour-layer placement shape.
+        project: migrateProject(action.project),
         ui: {
           ...state.ui,
           activePourId: action.project.pours[0]?.id ?? null,
@@ -207,10 +231,9 @@ export function reduce(state: AppState, action: Action): AppState {
       return {
         ...state,
         project: withUpdatedAt({
-          ...state.project,
+          ...withClearedLayout(state.project),
           pours: remaining,
           walls,
-          placements: [],
         }),
         ui: {
           ...state.ui,
@@ -230,7 +253,10 @@ export function reduce(state: AppState, action: Action): AppState {
       };
       return {
         ...state,
-        project: withUpdatedAt({ ...state.project, walls: [...state.project.walls, wall], placements: [] }),
+        project: withUpdatedAt({
+          ...withClearedLayout(state.project),
+          walls: [...state.project.walls, wall],
+        }),
         ui: { ...state.ui, layoutDirty: true, selectedWallId: wall.id, selectedWallIds: [wall.id] },
       };
     }
@@ -238,11 +264,10 @@ export function reduce(state: AppState, action: Action): AppState {
       return {
         ...state,
         project: withUpdatedAt({
-          ...state.project,
+          ...withClearedLayout(state.project),
           walls: state.project.walls.map((w) =>
             w.id === action.wallId ? { ...w, ...action.patch } : w
           ),
-          placements: [],
         }),
         ui: { ...state.ui, layoutDirty: true },
       };
@@ -251,7 +276,7 @@ export function reduce(state: AppState, action: Action): AppState {
       return {
         ...state,
         project: withUpdatedAt({
-          ...state.project,
+          ...withClearedLayout(state.project),
           walls: state.project.walls.filter((w) => w.id !== action.wallId),
           placements: [],
         }),
@@ -262,7 +287,7 @@ export function reduce(state: AppState, action: Action): AppState {
       return {
         ...state,
         project: withUpdatedAt({
-          ...state.project,
+          ...withClearedLayout(state.project),
           walls: state.project.walls.filter((w) => !remove.has(w.id)),
           placements: [],
         }),
@@ -290,17 +315,33 @@ export function reduce(state: AppState, action: Action): AppState {
       });
       return {
         ...state,
-        project: withUpdatedAt({ ...state.project, walls, placements: [] }),
+        project: withUpdatedAt({ ...withClearedLayout(state.project), walls }),
         ui: { ...state.ui, layoutDirty: true },
       };
     }
 
     case "compute": {
-      const placements = tileProject(state.project);
+      const { placements, layout } = tileProject(state.project);
       return {
         ...state,
-        project: withUpdatedAt({ ...state.project, placements }),
+        project: withUpdatedAt({ ...state.project, placements, layout }),
         ui: { ...state.ui, layoutDirty: false },
+      };
+    }
+
+    case "set-quantity-override": {
+      const field = state.project.overrides?.[action.field] ?? {};
+      return {
+        ...state,
+        // Deliberately does NOT clear the layout: a hand-typed quantity has to
+        // survive every recompute, which is the whole point of it.
+        project: withUpdatedAt({
+          ...state.project,
+          overrides: {
+            ...state.project.overrides,
+            [action.field]: { ...field, [action.pourId]: action.value },
+          },
+        }),
       };
     }
 

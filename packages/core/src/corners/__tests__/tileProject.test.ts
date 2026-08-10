@@ -1,9 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { Placement, Pour, Project, Wall } from "../../types.js";
+import type { Placement, PlacementSide, Pour, Project, Wall } from "../../types.js";
 import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
+import { countPanels } from "../../accessories/countPanels.js";
+import { countAccessories } from "../../accessories/countAccessories.js";
+import { countCornerUnits } from "../../accessories/units.js";
 import { deriveOuterLine } from "../deriveOuterLine.js";
-import { rectangleWalls, lShapeWalls } from "../../geometry/__tests__/fixtures.js";
-import { tileProject } from "../tileProject.js";
+import {
+  collinearSplitWallWalls,
+  doubleContourLShapeWalls,
+  doubleContourRoomWalls,
+  doubleContourRoomWallsMixedDirection,
+  lShapeWalls,
+  rectangleWalls,
+  roomWithInteriorWallWalls,
+} from "../../geometry/__tests__/fixtures.js";
+import { tileProject, tileProjectPlacements } from "../tileProject.js";
 
 const pour: Pour = { id: "pour-1", name: "יציקה 1", color: "#000", order: 0 };
 
@@ -21,37 +32,147 @@ function projectOf(walls: Wall[]): Project {
   };
 }
 
-function offsetsFor(placements: Placement[], edgeId: string, side: "inner" | "outer"): number[] {
+function tile(walls: Wall[]): Placement[] {
+  return tileProjectPlacements(projectOf(walls));
+}
+
+function offsetsFor(placements: Placement[], edgeId: string, side: PlacementSide): number[] {
   return placements
     .filter((p) => p.edgeId === edgeId && p.side === side)
     // The sync invariant covers the STRAIGHT run only. Both corner artifacts
-    // are single-sided by design — the C30x30 exists on the inner face, the
-    // overlap strip on the outer — so including either would falsely fail
-    // the "every inner joint has an outer joint" check.
+    // are single-faced by design — the C30x30 on the room side, the overlap
+    // strip on the outside — so including either would falsely fail the
+    // "every face-A joint has a face-B joint" check.
     .filter((p) => !p.flags.includes("outer-corner-protrusion"))
     .filter((p) => p.kind !== "corner-panel")
     .map((p) => p.offsetAlongEdge)
     .sort((a, b) => a - b);
 }
 
-describe("tileProject — Dywidag sync", () => {
-  it("rectangular room: every inner joint has an outer joint at the exact same offsetAlongEdge", () => {
-    const placements = tileProject(projectOf(rectangleWalls()));
-    for (const wallId of ["bottom", "right", "top", "left"]) {
-      const edgeId = `edge:${wallId}`;
-      const inner = offsetsFor(placements, edgeId, "inner");
-      const outer = offsetsFor(placements, edgeId, "outer");
-      expect(inner.length).toBeGreaterThan(0);
-      expect(outer).toEqual(inner);
+describe("tileProject — the customer's two-contour drawing", () => {
+  it("produces exactly the same panels as the same room drawn as one contour", () => {
+    const twoContours = countPanels(tile(doubleContourRoomWalls()));
+    const oneContour = countPanels(tile(rectangleWalls()));
+
+    expect(twoContours.byType).toEqual(oneContour.byType);
+    expect(twoContours.timberPieces).toBe(oneContour.timberPieces);
+  });
+
+  it("never places anything on a wall that was only the far face of another", () => {
+    const project = projectOf(doubleContourRoomWalls());
+    const { placements, layout } = tileProject(project);
+    const consumed = new Set(layout.resolvedWalls.flatMap((w) => w.consumedWallIds));
+
+    expect(consumed.size).toBe(4);
+    for (const placement of placements) {
+      expect(consumed.has(placement.wallId)).toBe(false);
     }
   });
 
-  it("preserves offsetAlongEdge across sync even when widths vary (mixed panel types on the same wall)", () => {
-    const placements = tileProject(projectOf(rectangleWalls()));
-    // Pair-up inner and outer placements by (edgeId, offsetAlongEdge) — for
-    // each such pair we expect matching widths and panel types, since sync
-    // is a straight copy with side flipped.
-    const byKey = new Map<string, { inner?: Placement; outer?: Placement }>();
+  it("counts every accessory the same as the one-contour room, struts included", () => {
+    const two = projectOf(doubleContourRoomWalls());
+    const one = projectOf(rectangleWalls());
+    const twoResult = tileProject(two);
+    const oneResult = tileProject(one);
+
+    const count = (r: typeof twoResult, p: Project) =>
+      countAccessories(r.placements, r.layout.edges, p.walls, DEFAULT_ACCESSORY_RULES);
+
+    // Struts are counted per edge, so a consumed outer-contour wall left in the
+    // layout would silently inflate them even though the panels came out right.
+    expect(count(twoResult, two)).toEqual(count(oneResult, one));
+    expect(twoResult.layout.edges).toHaveLength(4);
+  });
+
+  it("keeps the corner and clamp counts identical to the one-contour room", () => {
+    const two = tile(doubleContourRoomWalls());
+    const one = tile(rectangleWalls());
+
+    expect(countCornerUnits(two)).toBe(4);
+    expect(countCornerUnits(two)).toBe(countCornerUnits(one));
+    expect(two.filter((p) => p.kind === "corner-panel")).toHaveLength(8);
+    expect(two.filter((p) => p.flags.includes("outer-corner-protrusion"))).toHaveLength(8);
+  });
+
+  it("is unaffected by which way the individual walls were dragged", () => {
+    const straight = countPanels(tile(doubleContourRoomWalls()));
+    const mixed = countPanels(tile(doubleContourRoomWallsMixedDirection()));
+
+    expect(mixed.byType).toEqual(straight.byType);
+    expect(mixed.timberPieces).toBe(straight.timberPieces);
+  });
+
+  it("handles the two-contour L-shape as one six-wall ring", () => {
+    const placements = tile(doubleContourLShapeWalls());
+
+    expect(countCornerUnits(placements)).toBe(6);
+    expect(new Set(placements.map((p) => p.wallId)).size).toBe(6);
+  });
+
+  it("raises no unexpected flags", () => {
+    for (const p of tile(doubleContourRoomWalls())) {
+      const unexpected = p.flags.filter((f) => f !== "outer-corner-protrusion");
+      expect(unexpected, `wall=${p.wallId} side=${p.side}`).toHaveLength(0);
+    }
+  });
+});
+
+describe("tileProject — a wall drawn as two collinear segments", () => {
+  it("does not invent a corner panel or its clamps at the seam", () => {
+    const split = tile(collinearSplitWallWalls());
+    const whole = tile(rectangleWalls());
+
+    expect(countCornerUnits(split)).toBe(4);
+    expect(countCornerUnits(whole)).toBe(4);
+
+    const rules = DEFAULT_ACCESSORY_RULES;
+    const splitCounts = countAccessories(split, layoutEdges(collinearSplitWallWalls()), collinearSplitWallWalls(), rules);
+    expect(splitCounts.cornerClamps).toBe(12);
+  });
+});
+
+describe("tileProject — a partition between two rooms", () => {
+  it("tiles both faces as interior and puts no overlap strip on it", () => {
+    const { placements } = tileProject(projectOf(roomWithInteriorWallWalls()));
+    const partition = placements.filter((p) => p.wallId === "partition");
+
+    expect(partition.length).toBeGreaterThan(0);
+    expect(partition.every((p) => p.faceIsInterior)).toBe(true);
+    expect(partition.some((p) => p.side === "faceA")).toBe(true);
+    expect(partition.some((p) => p.side === "faceB")).toBe(true);
+    expect(partition.some((p) => p.flags.includes("outer-corner-protrusion"))).toBe(false);
+  });
+
+  it("still reports four corner units at the box corners", () => {
+    expect(countCornerUnits(tile(roomWithInteriorWallWalls()))).toBe(4);
+  });
+});
+
+describe("tileProject — Dywidag sync", () => {
+  it("rectangular room: every face-A joint has a face-B joint at the exact same offsetAlongEdge", () => {
+    const placements = tile(rectangleWalls());
+    for (const wallId of ["bottom", "right", "top", "left"]) {
+      const edgeId = `edge:${wallId}`;
+      const faceA = offsetsFor(placements, edgeId, "faceA");
+      const faceB = offsetsFor(placements, edgeId, "faceB");
+      expect(faceA.length).toBeGreaterThan(0);
+      expect(faceB).toEqual(faceA);
+    }
+  });
+
+  it("holds on the two-contour drawing too", () => {
+    const placements = tile(doubleContourRoomWalls());
+    for (const wallId of ["in-bottom", "in-right", "in-top", "in-left"]) {
+      const edgeId = `edge:${wallId}`;
+      expect(offsetsFor(placements, edgeId, "faceB")).toEqual(
+        offsetsFor(placements, edgeId, "faceA")
+      );
+    }
+  });
+
+  it("preserves widths and types across the mirror", () => {
+    const placements = tile(rectangleWalls());
+    const byKey = new Map<string, Partial<Record<PlacementSide, Placement>>>();
     for (const p of placements) {
       if (p.flags.includes("outer-corner-protrusion")) continue;
       if (p.kind === "corner-panel") continue;
@@ -61,24 +182,25 @@ describe("tileProject — Dywidag sync", () => {
       byKey.set(key, slot);
     }
     for (const [key, slot] of byKey) {
-      expect(slot.inner, `missing inner for ${key}`).toBeDefined();
-      expect(slot.outer, `missing outer for ${key}`).toBeDefined();
-      expect(slot.outer?.width).toBe(slot.inner?.width);
-      expect(slot.outer?.panelType).toBe(slot.inner?.panelType);
-      expect(slot.outer?.kind).toBe(slot.inner?.kind);
+      expect(slot.faceA, `missing face A for ${key}`).toBeDefined();
+      expect(slot.faceB, `missing face B for ${key}`).toBeDefined();
+      expect(slot.faceB?.width).toBe(slot.faceA?.width);
+      expect(slot.faceB?.panelType).toBe(slot.faceA?.panelType);
+      expect(slot.faceB?.kind).toBe(slot.faceA?.kind);
     }
   });
 });
 
 describe("tileProject — 10cm rule at outer corners", () => {
-  it("rectangular room: each outer corner gets a straight (not corner-panel) 10cm protrusion on the outer face", () => {
-    const placements = tileProject(projectOf(rectangleWalls()));
+  it("rectangular room: each outer corner gets a straight 10cm protrusion on the exterior face", () => {
+    const placements = tile(rectangleWalls());
     const protrusions = placements.filter((p) => p.flags.includes("outer-corner-protrusion"));
 
     // 4 outer corners × 2 meeting walls each = 8 protrusions.
     expect(protrusions).toHaveLength(8);
     for (const p of protrusions) {
-      expect(p.side).toBe("outer");
+      expect(p.side).toBe("faceB");
+      expect(p.faceIsInterior).toBe(false);
       expect(p.width).toBe(DEFAULT_ACCESSORY_RULES.outerCornerProtrusionCm);
       expect(p.kind).not.toBe("corner-panel");
     }
@@ -86,7 +208,7 @@ describe("tileProject — 10cm rule at outer corners", () => {
     // corner panel, present at these same convex corners.
     const cornerLegs = placements.filter((p) => p.kind === "corner-panel");
     expect(cornerLegs).toHaveLength(8);
-    expect(cornerLegs.every((p) => p.side === "inner")).toBe(true);
+    expect(cornerLegs.every((p) => p.side === "faceA")).toBe(true);
   });
 
   it("uses the configured outerCornerProtrusionCm, not a hard-coded 10", () => {
@@ -95,23 +217,23 @@ describe("tileProject — 10cm rule at outer corners", () => {
       ...project,
       rules: { ...project.rules, outerCornerProtrusionCm: 12 },
     };
-    const placements = tileProject(custom);
-    for (const p of placements.filter((x) => x.flags.includes("outer-corner-protrusion"))) {
+    for (const p of tileProjectPlacements(custom).filter((x) =>
+      x.flags.includes("outer-corner-protrusion")
+    )) {
       expect(p.width).toBe(12);
     }
   });
 });
 
 describe("tileProject — corner panels", () => {
-  it("L-shape: every corner gets a C30x30, inner face only, one leg per meeting wall", () => {
-    const placements = tileProject(projectOf(lShapeWalls()));
-    const cornerPanels = placements.filter((p) => p.kind === "corner-panel");
+  it("L-shape: every corner gets a C30x30 on the room face, one leg per meeting wall", () => {
+    const cornerPanels = tile(lShapeWalls()).filter((p) => p.kind === "corner-panel");
 
     // 6 corners × 2 meeting walls = 12 legs, 6 physical panels.
     expect(cornerPanels).toHaveLength(12);
     expect(new Set(cornerPanels.map((p) => p.groupId)).size).toBe(6);
     expect(cornerPanels.every((p) => p.panelType === "C30x30")).toBe(true);
-    expect(cornerPanels.every((p) => p.side === "inner")).toBe(true);
+    expect(cornerPanels.every((p) => p.side === "faceA")).toBe(true);
 
     // The notch walls each carry a leg at both of their ends.
     for (const wallId of ["w3", "w4"]) {
@@ -122,27 +244,37 @@ describe("tileProject — corner panels", () => {
 
 describe("tileProject — full pipeline coherence", () => {
   it("rectangular room: no unexpected failure flags on any placement", () => {
-    const placements = tileProject(projectOf(rectangleWalls()));
-    for (const p of placements) {
-      // The only tolerated flag in this fully-resolved layout is the
-      // deliberate outer-corner-protrusion marker.
+    for (const p of tile(rectangleWalls())) {
       const unexpected = p.flags.filter((f) => f !== "outer-corner-protrusion");
       expect(unexpected, `edge=${p.edgeId} side=${p.side}`).toHaveLength(0);
     }
   });
 
-  it("returns some inner + some outer + some protrusion placements (all three buckets non-empty)", () => {
-    const placements = tileProject(projectOf(rectangleWalls()));
-    expect(placements.some((p) => p.side === "inner")).toBe(true);
-    expect(placements.some((p) => p.side === "outer" && !p.flags.includes("outer-corner-protrusion"))).toBe(true);
+  it("returns face A, face B and protrusion placements (all three buckets non-empty)", () => {
+    const placements = tile(rectangleWalls());
+    expect(placements.some((p) => p.side === "faceA")).toBe(true);
+    expect(
+      placements.some((p) => p.side === "faceB" && !p.flags.includes("outer-corner-protrusion"))
+    ).toBe(true);
     expect(placements.some((p) => p.flags.includes("outer-corner-protrusion"))).toBe(true);
+  });
+
+  it("returns a layout describing what it decided", () => {
+    const { layout } = tileProject(projectOf(doubleContourRoomWalls()));
+
+    expect(layout.resolvedWalls).toHaveLength(4);
+    expect(layout.corners).toHaveLength(4);
+    expect(layout.regions.map((r) => r.kind).sort()).toEqual([
+      "outside",
+      "room",
+      "wall-material",
+    ]);
+    expect(layout.engineVersion).toBeGreaterThanOrEqual(2);
   });
 });
 
 describe("tileProject — variable wall thickness", () => {
   it("deriveOuterLine offsets each wall by its own thickness (not a global constant)", () => {
-    // Same wall geometry, two thicknesses — the outer lines land at
-    // different y coordinates, matching per-wall thickness.
     const thin: Wall = {
       id: "thin",
       pourId: "pour-1",
@@ -154,26 +286,26 @@ describe("tileProject — variable wall thickness", () => {
     expect(deriveOuterLine(thick)[0].y).toBe(-30);
   });
 
-  it("full pipeline runs on a room mixing 20cm and 30cm walls: inner/outer sync still holds per wall", () => {
+  it("full pipeline runs on a room mixing 20cm and 30cm walls: face sync still holds per wall", () => {
     const walls: Wall[] = [
       { id: "bottom", pourId: "pour-1", innerLine: [{ x: 0, y: 0 }, { x: 300, y: 0 }], thickness: 20 },
       { id: "right", pourId: "pour-1", innerLine: [{ x: 300, y: 0 }, { x: 300, y: 300 }], thickness: 30 },
       { id: "top", pourId: "pour-1", innerLine: [{ x: 300, y: 300 }, { x: 0, y: 300 }], thickness: 20 },
       { id: "left", pourId: "pour-1", innerLine: [{ x: 0, y: 300 }, { x: 0, y: 0 }], thickness: 30 },
     ];
-    const placements = tileProject(projectOf(walls));
+    const placements = tile(walls);
 
-    // Sync still holds regardless of thickness — Dywidag alignment is per
-    // wall and doesn't care about neighbor thickness.
     for (const wallId of ["bottom", "right", "top", "left"]) {
-      const inner = offsetsFor(placements, `edge:${wallId}`, "inner");
-      const outer = offsetsFor(placements, `edge:${wallId}`, "outer");
-      expect(outer).toEqual(inner);
+      expect(offsetsFor(placements, `edge:${wallId}`, "faceB")).toEqual(
+        offsetsFor(placements, `edge:${wallId}`, "faceA")
+      );
     }
-    // And no unexpected flags surface.
     for (const p of placements) {
-      const unexpected = p.flags.filter((f) => f !== "outer-corner-protrusion");
-      expect(unexpected).toHaveLength(0);
+      expect(p.flags.filter((f) => f !== "outer-corner-protrusion")).toHaveLength(0);
     }
   });
 });
+
+function layoutEdges(walls: Wall[]) {
+  return tileProject(projectOf(walls)).layout.edges;
+}

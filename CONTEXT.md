@@ -15,10 +15,10 @@ a visual layout (canvas) and an export (PDF/Excel) for the field crew.
 ## Architecture
 
 ```
-/packages/core      Pure TypeScript calculation engine — geometry, tiling,
-                     accessory rules, StorageProvider interface. No DOM, no
-                     Node APIs. Runs identically in the browser and on the
-                     server.
+/packages/core      Pure TypeScript calculation engine — geometry, contour
+                     resolution, tiling, accessory rules, StorageProvider
+                     interface. No DOM, no Node APIs. Runs identically in the
+                     browser and on the server.
 /packages/web        React + TypeScript + Vite + Konva.js. The canvas
                      editor, pour manager UI, project list, config screens,
                      client-side PDF export.
@@ -63,6 +63,16 @@ touching anything that constructs or consumes these objects.
 These are the rules golden tests will be built around. Get them right; get
 the field crew wrong numbers and it's a physical, on-site problem.
 
+- **Contour resolution** (`core/src/contours/`): the engine decides what the
+  user drew before it tiles anything. Planar face traversal
+  (`geometry/planarFaces.ts`) splits the wall graph into regions; regions whose
+  boundary pairs up across a constant wall-like gap are *wall material*, not
+  rooms, which is how a plan traced as an inner AND an outer rectangle collapses
+  into one wall ring instead of two doubled-up wall sets. From that fall out:
+  each wall's outward direction (never the drag direction), whether each face
+  borders a room, and which drawn walls were only somebody else's far face
+  (`consumedWallIds` — never tiled). `Placement.side` is `faceA`/`faceB`;
+  whether a face borders a room is the separate `faceIsInterior`.
 - **Middle rule** (חוק האמצע): tiling fills leading panels from the edges
   and puts the remainder panel in the middle. Canonical check: 340cm →
   4×75 + 40 in the middle.

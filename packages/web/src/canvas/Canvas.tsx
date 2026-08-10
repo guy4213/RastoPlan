@@ -3,6 +3,7 @@ import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import type { Point } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
+import { duplicatePlacementId } from "../state/placementId.js";
 import { Grid } from "./Grid.js";
 import { Walls } from "./Walls.js";
 import { Placements } from "./Placements.js";
@@ -71,7 +72,7 @@ export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const size = useSize(containerRef);
   const { view, tool, selectedWallId, selectedWallIds, selectedPlacementId, units } = state.ui;
-  const { walls, pours, placements, rules } = state.project;
+  const { walls, pours, placements, rules, layout } = state.project;
 
   const [drawStart, setDrawStart] = useState<Point | null>(null);
   const [drawEnd, setDrawEnd] = useState<Point | null>(null);
@@ -412,6 +413,7 @@ export function Canvas() {
           <Walls
             walls={walls}
             pours={pours}
+            layout={layout}
             selectedWallId={selectedWallId}
             selectedWallIds={selectedWallIds}
             scale={view.scale}
@@ -423,6 +425,7 @@ export function Canvas() {
           <Placements
             walls={walls}
             placements={placements}
+            layout={layout}
             selectedPlacementId={selectedPlacementId}
             scale={view.scale}
             onSelect={(id) => dispatch({ type: "select-placement", placementId: id })}
@@ -433,6 +436,7 @@ export function Canvas() {
           <CornerClamps
             walls={walls}
             placements={placements}
+            layout={layout}
             rules={rules}
             scale={view.scale}
           />
@@ -525,7 +529,7 @@ export function Canvas() {
                 type: "insert-placement",
                 placement: {
                   ...original,
-                  id: `${original.id}:dup:${Date.now()}`,
+                  id: duplicatePlacementId(original),
                   offsetAlongEdge: original.offsetAlongEdge + original.width,
                   source: "manual",
                   flags: [],

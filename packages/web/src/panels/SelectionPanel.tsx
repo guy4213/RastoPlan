@@ -1,5 +1,6 @@
 import type { Placement } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
+import { duplicatePlacementId } from "../state/placementId.js";
 
 export function SelectionPanel() {
   const { state, dispatch } = useProject();
@@ -55,8 +56,11 @@ export function SelectionPanel() {
             style={inputStyle}
           />
         </Row>
+        <Row label="פאה">
+          <span>{placement.side === "faceA" ? "פאה א׳" : "פאה ב׳"}</span>
+        </Row>
         <Row label="צד">
-          <span>{placement.side === "inner" ? "פנימי" : "חיצוני"}</span>
+          <span>{placement.faceIsInterior ? "פנימי (גובל בחדר)" : "חיצוני"}</span>
         </Row>
         <Row label="מקור">
           <span style={{ color: placement.source === "manual" ? "#b45309" : "#059669" }}>
@@ -92,7 +96,7 @@ export function SelectionPanel() {
 function duplicateAfter(placement: Placement, dispatch: (a: { type: "insert-placement"; placement: Placement }) => void) {
   const copy: Placement = {
     ...placement,
-    id: `${placement.id}:dup:${Date.now()}`,
+    id: duplicatePlacementId(placement),
     offsetAlongEdge: placement.offsetAlongEdge + placement.width,
     source: "manual",
     flags: [],

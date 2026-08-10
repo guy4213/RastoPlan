@@ -40,6 +40,7 @@ export function buildGraph(walls: Wall[]): BuildGraphResult {
         point,
         // Placeholder — classifyNodes() is responsible for the real value.
         type: "end",
+        flags: [],
       };
       nodes.push(node);
       mergeCounts.push(1);

@@ -1,11 +1,13 @@
 import { useMemo } from "react";
 import { Circle, Group, Text } from "react-konva";
-import type { AccessoryRules, Placement, Wall } from "@rastoplan/core";
+import type { AccessoryRules, Placement, ProjectLayout, Wall } from "@rastoplan/core";
 import { wallDirection, wallNormal } from "./geometry.js";
+import { resolvedWallFrame } from "./resolvedWallFrame.js";
 
 interface Props {
   walls: Wall[];
   placements: Placement[];
+  layout: ProjectLayout | undefined;
   rules: AccessoryRules;
   scale: number;
 }
@@ -41,6 +43,7 @@ interface CornerMarker {
 function computeMarkers(
   walls: Wall[],
   placements: Placement[],
+  layout: ProjectLayout | undefined,
   clampsPerCorner: number
 ): CornerMarker[] {
   const wallById = new Map(walls.map((w) => [w.id, w]));
@@ -53,18 +56,20 @@ function computeMarkers(
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const wall = wallById.get(p.edgeId.replace(/^edge:/, ""));
+    const wall = wallById.get(p.wallId);
     if (!wall) continue;
 
     const atA = p.offsetAlongEdge < 0;
     const vertex = atA ? wall.innerLine[0] : wall.innerLine[1];
     const dir = wallDirection(wall);
     const n = wallNormal(wall);
-    // Corner panels sit on the inner face — normal points outward, so inward
-    // is the negative normal. Push the marker cluster ~10cm inward so it
-    // lands visibly on the drawing rather than dead on the wall line.
-    const inwardX = -n.x;
-    const inwardY = -n.y;
+    // Nudge the cluster ~10cm off the wall line, toward the room the corner
+    // panel actually serves. On a face-B corner panel (a wall with rooms on
+    // both sides) that is the opposite direction from a face-A one.
+    const frame = resolvedWallFrame(wall, layout);
+    const towardRoom = p.side === "faceB" ? frame.outwardSign : -frame.outwardSign;
+    const inwardX = n.x * towardRoom;
+    const inwardY = n.y * towardRoom;
     // Spread the cluster tangentially along the wall so 3 dots don't stack.
     // If we're at end A, spread into the wall (+dir); at end B, spread
     // back into the wall (-dir).
@@ -90,10 +95,10 @@ function computeMarkers(
  * Purely presentational — the BOM is still the source of truth for counts,
  * this only makes the count visible on the drawing.
  */
-export function CornerClamps({ walls, placements, rules, scale }: Props) {
+export function CornerClamps({ walls, placements, layout, rules, scale }: Props) {
   const markers = useMemo(
-    () => computeMarkers(walls, placements, rules.cornerClampsPerCorner),
-    [walls, placements, rules.cornerClampsPerCorner]
+    () => computeMarkers(walls, placements, layout, rules.cornerClampsPerCorner),
+    [walls, placements, layout, rules.cornerClampsPerCorner]
   );
 
   const dotRadius = 3.5;

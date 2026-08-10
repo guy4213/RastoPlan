@@ -1,139 +1,179 @@
-import type { AccessoryRules, Edge, Node, PanelCatalog, Placement, Wall } from "../types.js";
+import type {
+  AccessoryRules,
+  Edge,
+  Node,
+  PanelCatalog,
+  Placement,
+  PlacementSide,
+  ResolvedWall,
+  Wall,
+} from "../types.js";
+import type { WallResolution } from "../contours/resolveWalls.js";
 import { otherWallThicknessAt } from "../geometry/neighborThickness.js";
 import { outerCornerProtrusionFor } from "./outerCornerProtrusion.js";
 
+export interface PlaceCornerPanelsInput {
+  resolution: WallResolution;
+  walls: Wall[];
+  catalog: PanelCatalog;
+  rules: AccessoryRules;
+}
+
 export interface PlaceCornerPanelsResult {
   /**
-   * C30x30 placements at EVERY L corner, INNER face only.
-   *
-   * One physical corner panel wraps the corner, so it emits one leg on each
-   * meeting wall; both legs carry the same `groupId` and must be counted once
-   * (its BOM area, 1.8m², is both legs together). The outer face gets straight
-   * panels plus an overlap instead — never a corner panel — which is why these
-   * are deliberately not fed to syncOuterPlacements.
+   * Corner-panel legs, one per meeting wall per room. Both legs of one physical
+   * panel share `groupId` and must be counted once (its 1.8m² is both legs
+   * together). A wall with a room on each side gets a panel on each face.
    */
-  innerCornerPanels: Placement[];
+  cornerPanels: Placement[];
   /**
-   * Overlap strips at convex ('outer') L corners, OUTER face only, width per
-   * `outerCornerProtrusionFor` (neighbour-thickness dependent). Emitted once
-   * per (edge, outer-corner end); the two meeting walls therefore both carry
-   * one, and picking which physical panel actually wraps is a downstream
-   * drafting choice.
+   * Overlap strips where two straight panels meet at a convex corner. Only on
+   * faces that don't border a room — a partition between two rooms has a corner
+   * panel on both sides and no overlap anywhere.
    */
-  outerCornerProtrusions: Placement[];
-  /**
-   * Edges with clearLength recomputed for the real corner-consumption rules
-   * (one corner-panel leg off each L-corner end, replacing computeClearLengths's
-   * neighbor-thickness placeholder), and with T/cross/unresolved flags carried
-   * through.
-   */
+  protrusions: Placement[];
+  /** Edges with clearLength recomputed for the corner panels actually placed. */
   edges: Edge[];
 }
 
 /**
- * Places the corner-adjacent formwork per the corners layer's rules:
- * - every L corner: a corner panel (C30x30) on the inner face, because the
- *   inner formwork folds around the corner. Both concave and convex corners —
- *   they are not alternatives, which is what the customer corrected.
- * - convex ('outer') L corner additionally: on the outer face two straight
- *   panels meet with an overlap, so an overlap strip is emitted there.
+ * Places the corner-adjacent formwork, driven by the resolved corners rather
+ * than by raw node degree.
  *
- * `offsetAlongEdge` on every returned Placement is expressed in the clear-run
- * frame (same frame tileWall uses): 0 to clearLength is the tileable straight
- * run, and corner-adjacent placements sit at negative offsets or offsets
- * ≥ clearLength — i.e., outside the clear run.
+ * Two things this fixes over counting corners per edge-end: a straight join
+ * (one wall drawn as two segments) is no longer a corner at all, and a corner
+ * shared by two rooms is correctly two corner panels rather than one.
+ *
+ * `offsetAlongEdge` is in the clear-run frame tileWall uses: 0..clearLength is
+ * the tileable straight run, and corner-adjacent placements sit outside it.
  */
-export function placeCornerPanels(
-  nodes: Node[],
-  edges: Edge[],
-  walls: Wall[],
-  catalog: PanelCatalog,
-  rules: AccessoryRules
-): PlaceCornerPanelsResult {
-  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPanelsResult {
+  const { resolution, walls, catalog, rules } = input;
+  const nodeById = new Map(resolution.nodes.map((n) => [n.id, n]));
   const wallById = new Map(walls.map((w) => [w.id, w]));
 
   const cornerPanel = pickCornerPanel(catalog);
   const cornerPanelWidth = cornerPanel?.width ?? 30;
   const cornerPanelType = cornerPanel?.type ?? "C30x30";
 
-  const innerCornerPanels: Placement[] = [];
-  const outerCornerProtrusions: Placement[] = [];
+  const cornerPanels: Placement[] = [];
+  const protrusions: Placement[] = [];
 
-  const adjustedEdges: Edge[] = edges.map((edge) => {
+  const cornersByEdgeId = new Map<string, typeof resolution.corners>();
+  for (const corner of resolution.corners) {
+    for (const edgeId of [corner.edgeAId, corner.edgeBId]) {
+      cornersByEdgeId.set(edgeId, [...(cornersByEdgeId.get(edgeId) ?? []), corner]);
+    }
+  }
+
+  const adjustedEdges: Edge[] = resolution.edges.map((edge) => {
+    const resolvedWall = resolution.wallByEdgeId.get(edge.id);
     const wall = wallById.get(edge.wallId);
-    if (!wall) return edge;
+    if (!resolvedWall || !wall) return edge;
 
     const [a, b] = wall.innerLine;
     const geometricLength = Math.hypot(b.x - a.x, b.y - a.y);
 
-    const nodeA = nodeById.get(edge.nodeA);
-    const nodeB = nodeById.get(edge.nodeB);
+    const endCorners = {
+      A: cornersAt(edge, "A", cornersByEdgeId, nodeById),
+      B: cornersAt(edge, "B", cornersByEdgeId, nodeById),
+    };
 
-    let deduction = 0;
-    const flags: string[] = [];
-
-    for (const node of [nodeA, nodeB]) {
+    const flags = [...edge.flags];
+    for (const end of ["A", "B"] as const) {
+      const nodeId = end === "A" ? edge.nodeA : edge.nodeB;
+      const node = nodeById.get(nodeId);
       if (!node) continue;
-      if (node.type === "L") {
-        deduction += cornerPanelWidth;
-        if (node.cornerSide !== "inner" && node.cornerSide !== "outer") {
-          flags.push("unresolved-corner-side");
-        }
-      } else if (node.type === "T") flags.push("unresolved-T");
-      else if (node.type === "cross") flags.push("unresolved-cross");
+      if (node.type === "T") pushOnce(flags, "unresolved-T");
+      else if (node.type === "cross") pushOnce(flags, "unresolved-cross");
+      else if (node.type === "straight-join") pushOnce(flags, "straight-join");
+      else if (node.type === "L" && endCorners[end].length === 0) {
+        pushOnce(flags, "unresolved-corner-side");
+      }
     }
 
+    // Each end loses one corner-panel leg's worth of run when any face there
+    // carries a corner panel. Straight joins and free ends consume nothing.
+    const deduction =
+      (endCorners.A.length > 0 ? cornerPanelWidth : 0) +
+      (endCorners.B.length > 0 ? cornerPanelWidth : 0);
     const clearLength = Math.max(0, geometricLength - deduction);
 
-    // Now that clearLength is known, emit corner-adjacent placements in the
-    // clear-run frame (offsets < 0 or ≥ clearLength sit outside the run).
-    const pourId = wall.pourId;
-    for (const [node, end] of [
-      [nodeA, "A"],
-      [nodeB, "B"],
-    ] as const) {
-      if (node?.type !== "L") continue;
+    for (const end of ["A", "B"] as const) {
+      for (const corner of endCorners[end]) {
+        const face = faceForRegion(resolvedWall, corner.regionId);
+        if (!face) continue;
 
-      innerCornerPanels.push({
-        id: `placement:${edge.id}:corner:${end}`,
-        // Both legs of one physical corner panel share the corner node.
-        groupId: `corner:${node.id}`,
-        edgeId: edge.id,
-        pourId,
-        side: "inner",
-        kind: "corner-panel",
-        panelType: cornerPanelType,
-        offsetAlongEdge: end === "A" ? -cornerPanelWidth : clearLength,
-        width: cornerPanelWidth,
-        source: "auto",
-        flags: [],
-      });
+        cornerPanels.push({
+          id: `placement:${edge.id}:corner:${end}:${face}`,
+          groupId: corner.id,
+          edgeId: edge.id,
+          wallId: resolvedWall.id,
+          pourId: resolvedWall.pourId,
+          side: face,
+          faceIsInterior: true,
+          kind: "corner-panel",
+          panelType: cornerPanelType,
+          offsetAlongEdge: end === "A" ? -cornerPanelWidth : clearLength,
+          width: cornerPanelWidth,
+          source: "auto",
+          flags: [],
+        });
 
-      if (node.cornerSide !== "outer") continue;
+        if (corner.side !== "outer") continue;
 
-      const protrusion = outerCornerProtrusionFor(
-        otherWallThicknessAt(node.id, edge, edges, wallById),
-        rules
-      );
-      outerCornerProtrusions.push({
-        id: `placement:${edge.id}:protrusion:${end}`,
-        edgeId: edge.id,
-        pourId,
-        side: "outer",
-        kind: "panel",
-        panelType: "",
-        offsetAlongEdge: end === "A" ? -protrusion : clearLength,
-        width: protrusion,
-        source: "auto",
-        flags: ["outer-corner-protrusion"],
-      });
+        const exterior = otherFace(resolvedWall, face);
+        if (exterior.isInterior) continue;
+
+        const protrusion = outerCornerProtrusionFor(
+          otherWallThicknessAt(
+            end === "A" ? edge.nodeA : edge.nodeB,
+            edge,
+            resolution.edges,
+            wallById
+          ),
+          rules
+        );
+        protrusions.push({
+          id: `placement:${edge.id}:protrusion:${end}`,
+          edgeId: edge.id,
+          wallId: resolvedWall.id,
+          pourId: resolvedWall.pourId,
+          side: exterior.id,
+          faceIsInterior: false,
+          kind: "panel",
+          panelType: "",
+          offsetAlongEdge: end === "A" ? -protrusion : clearLength,
+          width: protrusion,
+          source: "auto",
+          flags: ["outer-corner-protrusion"],
+        });
+      }
     }
 
     return { ...edge, clearLength, flags };
   });
 
-  return { innerCornerPanels, outerCornerProtrusions, edges: adjustedEdges };
+  return { cornerPanels, protrusions, edges: adjustedEdges };
+}
+
+function cornersAt(
+  edge: Edge,
+  end: "A" | "B",
+  cornersByEdgeId: Map<string, WallResolution["corners"]>,
+  nodeById: Map<string, Node>
+) {
+  const nodeId = end === "A" ? edge.nodeA : edge.nodeB;
+  if (nodeById.get(nodeId)?.type !== "L") return [];
+  return (cornersByEdgeId.get(edge.id) ?? []).filter((c) => c.nodeId === nodeId);
+}
+
+function faceForRegion(wall: ResolvedWall, regionId: string): PlacementSide | null {
+  return wall.faces.find((f) => f.regionId === regionId)?.id ?? null;
+}
+
+function otherFace(wall: ResolvedWall, face: PlacementSide) {
+  return wall.faces.find((f) => f.id !== face) ?? wall.faces[1];
 }
 
 /**
@@ -144,4 +184,8 @@ export function placeCornerPanels(
 function pickCornerPanel(catalog: PanelCatalog) {
   const corners = catalog.panels.filter((p) => p.kind === "corner" && p.inStock);
   return corners.find((p) => p.isLeading) ?? corners[0];
+}
+
+function pushOnce(flags: string[], flag: string): void {
+  if (!flags.includes(flag)) flags.push(flag);
 }

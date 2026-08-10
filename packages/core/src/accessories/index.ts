@@ -11,3 +11,5 @@ export type { DywidagRodLength } from "./dywidag.js";
 export { collapsePlacementUnits, countCornerUnits } from "./units.js";
 export { countPanels } from "./countPanels.js";
 export { countAccessoriesByPour, countPanelsByPour } from "./countByPour.js";
+export { applyQuantityOverrides, effectiveQuantity } from "./applyOverrides.js";
+export type { OverrideApplication } from "./applyOverrides.js";

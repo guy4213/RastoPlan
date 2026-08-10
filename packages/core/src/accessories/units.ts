@@ -19,9 +19,12 @@ export function collapsePlacementUnits(placements: Placement[]): Placement[] {
       singles.push(p);
       continue;
     }
-    const key = `${p.side}:${p.groupId}`;
-    const current = representatives.get(key);
-    if (!current || p.id < current.id) representatives.set(key, p);
+    // Keyed on groupId alone: `side` is wall-LOCAL, so at a corner between two
+    // walls one leg can sit on faceA and the other on faceB of walls whose A→B
+    // directions differ. groupId (`corner:${node}:${region}`) is already unique
+    // per physical unit, which is the only thing that must not be double-counted.
+    const current = representatives.get(p.groupId);
+    if (!current || p.id < current.id) representatives.set(p.groupId, p);
   }
 
   return [...singles, ...representatives.values()];

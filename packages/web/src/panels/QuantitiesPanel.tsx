@@ -1,54 +1,58 @@
 import { useMemo } from "react";
 import {
   ACCESSORY_ITEMS,
+  applyQuantityOverrides,
   buildBomTemplate,
-  buildGraph,
-  classifyCornerSides,
-  classifyNodes,
   countAccessoriesByPour,
   countPanelsByPour,
-  placeCornerPanels,
   type AccessoryCount,
   type PanelCount,
+  type Project,
+  type QuantityOverrides,
 } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
 import { downloadBomXlsx } from "../export/writeBomXlsx.js";
 
-/** Runs the graph pipeline just far enough to feed the accessory counter. */
-function computeGraph(project: ReturnType<typeof useProject>["state"]["project"]) {
-  const { nodes, edges } = buildGraph(project.walls);
-  const classified = classifyCornerSides(classifyNodes(nodes, edges), edges);
-  const corners = placeCornerPanels(classified, edges, project.walls, project.catalog, project.rules);
-  return { nodes: classified, edges: corners.edges };
-}
+/** The two rows the customer's own sheets type by hand — see docs/open-questions.md §3. */
+const OVERRIDABLE_ROWS = new Set<keyof AccessoryCount>(["cornerClamps", "straightClamps"]);
 
 export function QuantitiesPanel() {
-  const { state } = useProject();
+  const { state, dispatch } = useProject();
   const { project } = state;
 
-  const { accessories, panels, pourNames, totalPourIds } = useMemo(() => {
-    if (project.walls.length === 0) {
-      return {
-        accessories: { byPour: {}, total: emptyAccessory() },
-        panels: { byPour: {}, total: { byType: {}, timberPieces: 0, timberLengthCm: 0 } },
-        pourNames: new Map<string, string>(),
-        totalPourIds: [] as string[],
-      };
-    }
-    const graph = computeGraph(project);
-    const accessories = countAccessoriesByPour(
+  const { accessories, automatic, panels, pourNames, totalPourIds } = useMemo(() => {
+    const empty = {
+      accessories: { byPour: {}, total: emptyAccessory() },
+      automatic: { byPour: {}, total: emptyAccessory() },
+      panels: { byPour: {}, total: { byType: {}, timberPieces: 0, timberLengthCm: 0 } },
+      pourNames: new Map<string, string>(),
+      totalPourIds: [] as string[],
+    };
+    // Read the engine's own layout rather than re-deriving the graph here —
+    // a second copy of the pipeline in the UI silently drifts from the real one.
+    if (project.walls.length === 0 || !project.layout) return empty;
+
+    const automatic = countAccessoriesByPour(
       project.placements,
-      graph.edges,
+      project.layout.edges,
       project.walls,
       project.rules
     );
-    const panels = countPanelsByPour(project.placements, project.walls);
-    const pourNames = new Map(project.pours.map((p) => [p.id, p.name]));
-    const totalPourIds = project.pours.map((p) => p.id);
-    return { accessories, panels, pourNames, totalPourIds };
+    return {
+      accessories: applyQuantityOverrides(automatic, project.overrides).counts,
+      automatic,
+      panels: countPanelsByPour(project.placements, project.walls),
+      pourNames: new Map(project.pours.map((p) => [p.id, p.name])),
+      totalPourIds: project.pours.map((p) => p.id),
+    };
   }, [project]);
 
-  const hasPlacements = project.placements.length > 0;
+  const hasPlacements = project.placements.length > 0 && !!project.layout;
+  const diagnostics = project.layout?.diagnostics ?? [];
+
+  function setOverride(field: keyof QuantityOverrides, pourId: string, value: number | null) {
+    dispatch({ type: "set-quantity-override", field, pourId, value });
+  }
 
   async function exportBom() {
     const template = buildBomTemplate({
@@ -87,15 +91,20 @@ export function QuantitiesPanel() {
         </div>
       )}
 
+      {diagnostics.length > 0 && <Diagnostics items={diagnostics} />}
+
       {hasPlacements && (
         <>
           <SectionHeader>אביזרים</SectionHeader>
           <QuantityTable
             perPourIds={totalPourIds}
             perPour={accessories.byPour}
+            automaticPerPour={automatic.byPour}
             total={accessories.total}
             pourNames={pourNames}
             rows={ACCESSORY_ROWS}
+            overrides={project.overrides}
+            onOverride={setOverride}
           />
 
           <SectionHeader>פאנלים</SectionHeader>
@@ -138,15 +147,21 @@ const ACCESSORY_ROWS: Row<keyof AccessoryCount>[] = [
 function QuantityTable<K extends keyof AccessoryCount>({
   perPourIds,
   perPour,
+  automaticPerPour,
   total,
   pourNames,
   rows,
+  overrides,
+  onOverride,
 }: {
   perPourIds: string[];
   perPour: Record<string, AccessoryCount>;
+  automaticPerPour: Record<string, AccessoryCount>;
   total: AccessoryCount;
   pourNames: Map<string, string>;
   rows: Row<K>[];
+  overrides: QuantityOverrides | undefined;
+  onOverride: (field: keyof QuantityOverrides, pourId: string, value: number | null) => void;
 }) {
   return (
     <table style={tableStyle}>
@@ -160,17 +175,104 @@ function QuantityTable<K extends keyof AccessoryCount>({
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
-          <tr key={String(row.key)}>
-            <td style={tdLabelStyle}>{row.label}</td>
-            {perPourIds.map((id) => (
-              <td key={id} style={tdStyle}>{perPour[id]?.[row.key] ?? 0}</td>
-            ))}
-            <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>{total[row.key]}</td>
-          </tr>
-        ))}
+        {rows.map((row) => {
+          const editable = OVERRIDABLE_ROWS.has(row.key);
+          const field = row.key as keyof QuantityOverrides;
+          return (
+            <tr key={String(row.key)}>
+              <td style={tdLabelStyle}>{row.label}</td>
+              {perPourIds.map((id) => {
+                const automatic = automaticPerPour[id]?.[row.key] ?? 0;
+                const override = overrides?.[field]?.[id];
+                const isOverridden = editable && typeof override === "number";
+                if (!editable) {
+                  return <td key={id} style={tdStyle}>{perPour[id]?.[row.key] ?? 0}</td>;
+                }
+                return (
+                  <td
+                    key={id}
+                    style={{ ...tdStyle, background: isOverridden ? "#fef3c7" : undefined }}
+                  >
+                    <input
+                      type="number"
+                      min={0}
+                      value={isOverridden ? String(override) : ""}
+                      placeholder={String(automatic)}
+                      title={`אוטומטי: ${automatic}`}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        onOverride(field, id, raw === "" ? null : Number(raw));
+                      }}
+                      style={{
+                        ...overrideInputStyle,
+                        color: isOverridden ? "#78350f" : "#0f172a",
+                        fontWeight: isOverridden ? 600 : 400,
+                      }}
+                    />
+                    {isOverridden && (
+                      <button
+                        type="button"
+                        title="חזרה לחישוב אוטומטי"
+                        onClick={() => onOverride(field, id, null)}
+                        style={resetButtonStyle}
+                      >
+                        ↺
+                      </button>
+                    )}
+                  </td>
+                );
+              })}
+              <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>{total[row.key]}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
+  );
+}
+
+const DIAGNOSTIC_COLORS = {
+  error: { background: "#fee2e2", border: "#b91c1c", text: "#7f1d1d" },
+  warning: { background: "#fef3c7", border: "#b45309", text: "#78350f" },
+  info: { background: "#e0e7ff", border: "#4f46e5", text: "#3730a3" },
+} as const;
+
+/**
+ * What the engine could not decide on its own. Two contours 30cm apart are a
+ * wall or a duct depending on knowledge the drawing doesn't carry, so the
+ * pairings it made are listed for the engineer to eyeball rather than trusted
+ * silently.
+ */
+function Diagnostics({ items }: { items: NonNullable<Project["layout"]>["diagnostics"] }) {
+  const ordered = ["error", "warning", "info"] as const;
+  const sorted = [...items].sort(
+    (a, b) => ordered.indexOf(a.severity) - ordered.indexOf(b.severity)
+  );
+  return (
+    <>
+      <SectionHeader>הערות מנוע</SectionHeader>
+      <div style={{ padding: "8px 12px", display: "grid", gap: 6 }}>
+        {sorted.map((d, i) => {
+          const colors = DIAGNOSTIC_COLORS[d.severity];
+          return (
+            <div
+              key={`${d.code}:${i}`}
+              style={{
+                fontSize: 11,
+                lineHeight: 1.5,
+                padding: "6px 8px",
+                borderRadius: 4,
+                background: colors.background,
+                color: colors.text,
+                borderInlineStart: `3px solid ${colors.border}`,
+              }}
+            >
+              {d.message}
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -249,6 +351,28 @@ const exportButtonStyle: React.CSSProperties = {
   background: "#f1f5f9",
   border: "1px solid #cbd5e1",
   borderRadius: 4,
+  cursor: "pointer",
+};
+
+const overrideInputStyle: React.CSSProperties = {
+  width: 46,
+  padding: "1px 2px",
+  fontSize: 12,
+  textAlign: "center",
+  background: "transparent",
+  border: "1px solid transparent",
+  borderRadius: 3,
+};
+
+const resetButtonStyle: React.CSSProperties = {
+  marginInlineStart: 2,
+  padding: 0,
+  width: 14,
+  fontSize: 10,
+  lineHeight: 1,
+  color: "#b45309",
+  background: "transparent",
+  border: "none",
   cursor: "pointer",
 };
 

@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Edge, Placement, Wall } from "../../types.js";
-import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
-import { buildGraph } from "../../geometry/buildGraph.js";
-import { classifyNodes } from "../../geometry/classifyNodes.js";
-import { classifyCornerSides } from "../../geometry/classifyCornerSides.js";
+import { DEFAULT_ACCESSORY_RULES } from "../../defaults.js";
 import { lShapeWalls, rectangleWalls } from "../../geometry/__tests__/fixtures.js";
-import { placeCornerPanels } from "../../corners/placeCornerPanels.js";
 import { tileProject } from "../../corners/tileProject.js";
 import { countAccessories, countStraightJoints } from "../countAccessories.js";
 import { countPanels } from "../countPanels.js";
@@ -16,17 +12,8 @@ function buildGraphContext(walls: Wall[]): {
   walls: Wall[];
   placements: Placement[];
 } {
-  const { nodes, edges } = buildGraph(walls);
-  const classified = classifyCornerSides(classifyNodes(nodes, edges), edges);
-  const corners = placeCornerPanels(
-    classified,
-    edges,
-    walls,
-    DEFAULT_PANEL_CATALOG,
-    DEFAULT_ACCESSORY_RULES
-  );
-  const placements = tileProject(projectOf(walls));
-  return { edges: corners.edges, walls, placements };
+  const { placements, layout } = tileProject(projectOf(walls));
+  return { edges: layout.edges, walls, placements };
 }
 
 describe("countAccessories — rectangular room, manual verification", () => {
@@ -92,10 +79,10 @@ describe("countAccessories — the customer's clamp formulas", () => {
 });
 
 describe("countAccessories — struts", () => {
-  it("counts inner side ONLY — outer-face placements never inflate the strut count", () => {
+  it("counts face A ONLY — face-B placements never inflate the strut count", () => {
     const ctx = buildGraphContext(rectangleWalls());
 
-    const outerCount = ctx.placements.filter((p) => p.side === "outer").length;
+    const outerCount = ctx.placements.filter((p) => p.side === "faceB").length;
     expect(outerCount).toBeGreaterThan(0);
 
     const withPlacements = countAccessories(
@@ -106,7 +93,7 @@ describe("countAccessories — struts", () => {
     );
     // Struts read only from `edges`, not `placements` — dropping every
     // outer-face placement mustn't change the number.
-    const innerOnly = ctx.placements.filter((p) => p.side === "inner");
+    const innerOnly = ctx.placements.filter((p) => p.side === "faceA");
     const withoutOuter = countAccessories(innerOnly, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
     expect(withoutOuter.struts).toBe(withPlacements.struts);
   });
@@ -173,16 +160,18 @@ describe("countAccessories — robustness under manual edit", () => {
     // Find an inner edge and splice a synthetic 20cm panel right after
     // the first straight panel there — creating one extra panel, and one
     // extra panel-to-panel joint that the auto-tile didn't produce.
-    const anEdgeId = ctx.placements.find((p) => p.side === "inner" && p.kind === "panel")!.edgeId;
+    const anEdgeId = ctx.placements.find((p) => p.side === "faceA" && p.kind === "panel")!.edgeId;
     const edgePlacements = ctx.placements
-      .filter((p) => p.edgeId === anEdgeId && p.side === "inner" && p.kind === "panel")
+      .filter((p) => p.edgeId === anEdgeId && p.side === "faceA" && p.kind === "panel")
       .sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
     const first = edgePlacements[0]!;
     const inserted: Placement = {
       id: "manual:1",
       edgeId: anEdgeId,
+      wallId: first.wallId,
       pourId: first.pourId,
-      side: "inner",
+      side: "faceA",
+      faceIsInterior: true,
       kind: "panel",
       panelType: "R20",
       offsetAlongEdge: first.offsetAlongEdge + first.width,
@@ -192,7 +181,7 @@ describe("countAccessories — robustness under manual edit", () => {
     };
     // Shift everything after by +20 so adjacencies keep matching.
     const shifted = ctx.placements.map((p) => {
-      if (p.edgeId !== anEdgeId || p.side !== "inner") return p;
+      if (p.edgeId !== anEdgeId || p.side !== "faceA") return p;
       if (p.offsetAlongEdge < first.offsetAlongEdge + first.width) return p;
       if (p.id === first.id) return p;
       return { ...p, offsetAlongEdge: p.offsetAlongEdge + 20 };
@@ -215,14 +204,14 @@ describe("countAccessories — robustness under manual edit", () => {
     expect(after.cornerClamps).toBe(before.cornerClamps);
   });
 
-  it("removing every inner placement zeroes rods/nuts but leaves struts", () => {
+  it("removing every face-A placement zeroes rods/nuts but leaves struts", () => {
     const ctx = buildGraphContext(rectangleWalls());
-    const stripped = ctx.placements.filter((p) => p.side !== "inner");
+    const stripped = ctx.placements.filter((p) => p.side !== "faceA");
     const count = countAccessories(stripped, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
 
     expect(count.dywidagRods).toBe(0);
     expect(count.nuts).toBe(0);
-    // Corner panels are inner-face only, so they go with them.
+    // On a room drawn as one contour, corner panels live on face A only.
     expect(count.cornerClamps).toBe(0);
     // Struts still needed on the walls — they read from edges.
     expect(count.struts).toBe(10);

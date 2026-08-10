@@ -1,13 +1,12 @@
-import type { Point, Wall } from "../types.js";
+import type { OutwardSign, Point, Wall } from "../types.js";
 
 /**
  * Which perpendicular offset is "outer" relative to the wall's A→B direction.
- * +1 = the right-hand perpendicular of A→B (a CCW-traced room's exterior in
- * standard y-up math coords); -1 = the left-hand perpendicular. Callers that
- * know the wall's loop winding pick the sign; without that information +1 is
- * the documented default.
+ * The sign comes from `resolveWalls` (contours layer), which derives it from
+ * the wall loop the edge belongs to. The +1 default is only for callers that
+ * have no resolution yet — relying on it is what put outer bands inside rooms.
  */
-export type OuterSide = 1 | -1;
+export type OuterSide = OutwardSign;
 
 /**
  * Derives a wall's outer face centerline as a line parallel to `innerLine`,
