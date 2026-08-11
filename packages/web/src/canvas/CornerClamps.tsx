@@ -22,8 +22,12 @@ interface CornerBracket {
 
 /** How far each arm of the bracket reaches along its wall. */
 const ARM_CM = 45;
-/** How far the bracket stands off the outer face, so it reads as wrapping it. */
-const STANDOFF_CM = 7;
+/**
+ * Gap between the outer panel face and the bracket. Big enough to clear the
+ * panel band (8cm) and the bracket's own stroke, so the clamp sits OUTSIDE the
+ * corner rather than on top of the panels it holds.
+ */
+const CLEARANCE_CM = 19;
 
 /**
  * K30 corner clamps wrap the OUTSIDE of a corner, straddling the joint where
@@ -53,7 +57,7 @@ function computeBrackets(
     // are what give the bracket its two arms, so a lone leg can't be drawn.
     if (legs.length < 2) continue;
 
-    const arms: { corner: Point; along: Point }[] = [];
+    const arms: { corner: Point; along: Point; outward: Point }[] = [];
     let exterior = true;
 
     for (const leg of legs.slice(0, 2)) {
@@ -78,12 +82,16 @@ function computeBrackets(
 
       const n = wallNormal(wall);
       const outward = leg.side === "faceB" ? -frame.outwardSign : frame.outwardSign;
+      // A point on this wall's outer face, pushed CLEARANCE_CM further out so
+      // the bracket runs alongside the panels instead of over them.
+      const push = frame.faceBOffsetCm + CLEARANCE_CM;
       arms.push({
         corner: {
-          x: vertex.x + n.x * outward * frame.faceBOffsetCm,
-          y: vertex.y + n.y * outward * frame.faceBOffsetCm,
+          x: vertex.x + n.x * outward * push,
+          y: vertex.y + n.y * outward * push,
         },
         along: { x: (far.x - vertex.x) / length, y: (far.y - vertex.y) / length },
+        outward: { x: n.x * outward, y: n.y * outward },
       });
     }
 
@@ -95,26 +103,22 @@ function computeBrackets(
     // bracket somewhere inside the wall instead of on the corner.
     const elbow =
       intersect(arms[0]!.corner, arms[0]!.along, arms[1]!.corner, arms[1]!.along) ?? arms[0]!.corner;
-    // Push the whole bracket out along the corner's bisector so it sits clear
-    // of the panels rather than on top of them.
     const bisector = normalize({
-      x: -(arms[0]!.along.x + arms[1]!.along.x),
-      y: -(arms[0]!.along.y + arms[1]!.along.y),
+      x: arms[0]!.outward.x + arms[1]!.outward.x,
+      y: arms[0]!.outward.y + arms[1]!.outward.y,
     });
-    const shift = { x: bisector.x * STANDOFF_CM, y: bisector.y * STANDOFF_CM };
     const tip = (arm: { along: Point }) => ({
-      x: elbow.x + arm.along.x * ARM_CM + shift.x,
-      y: elbow.y + arm.along.y * ARM_CM + shift.y,
+      x: elbow.x + arm.along.x * ARM_CM,
+      y: elbow.y + arm.along.y * ARM_CM,
     });
 
     const p0 = tip(arms[0]!);
-    const p1 = { x: elbow.x + shift.x, y: elbow.y + shift.y };
     const p2 = tip(arms[1]!);
 
     brackets.push({
       key: groupId,
-      points: [p0.x, p0.y, p1.x, p1.y, p2.x, p2.y],
-      labelAt: { x: elbow.x + bisector.x * (STANDOFF_CM + 18), y: elbow.y + bisector.y * (STANDOFF_CM + 18) },
+      points: [p0.x, p0.y, elbow.x, elbow.y, p2.x, p2.y],
+      labelAt: { x: elbow.x + bisector.x * 22, y: elbow.y + bisector.y * 22 },
       count: Math.max(1, Math.round(clampsPerCorner)),
     });
   }
