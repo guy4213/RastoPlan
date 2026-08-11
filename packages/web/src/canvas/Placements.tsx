@@ -100,7 +100,7 @@ export function Placements({
           placement.offsetAlongEdge,
           placement.width,
           sideSign,
-          depth
+          placement.kind === "corner-panel" ? depth * 1.9 : depth
         );
         const push = { x: n.x * baseOffset, y: n.y * baseOffset };
         const points = [
@@ -120,6 +120,12 @@ export function Placements({
           y: a.y + dir.y * midOffset + (n.y * sideSign * depth) / 2 + push.y,
         };
         const angleDeg = (Math.atan2(dir.y, dir.x) * 180) / Math.PI;
+
+        // A corner panel is drawn deeper than a straight one and outlined
+        // heavier, so the leg reads as the wrapped panel it is rather than as a
+        // gap where the straight run stops. It only ever exists on a face that
+        // borders a room — the outside gets an overlap strip instead.
+        const isCornerLeg = placement.kind === "corner-panel";
 
         const labelText =
           placement.kind === "timber"
@@ -201,7 +207,7 @@ export function Placements({
               closed
               fill={colors.fill}
               stroke={selected ? "#000" : colors.stroke}
-              strokeWidth={(selected ? 2 : 1) / scale}
+              strokeWidth={(selected ? 2 : isCornerLeg ? 2 : 1) / scale}
               opacity={0.92}
             />
             {(() => {

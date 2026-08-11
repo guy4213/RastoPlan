@@ -53,16 +53,30 @@ describe("placeCornerPanels — a corner panel at EVERY corner", () => {
     expect([...byGroup.values()]).toEqual([2, 2, 2, 2]);
   });
 
-  it("tiles the drawn length exactly: a 400cm wall runs 400cm clear", () => {
+  it("deducts one corner-panel leg from each end: a 400cm wall runs 340cm clear", () => {
     const result = prep(rectangleWalls());
     for (const edge of result.edges) {
-      // The drawn line is the clear span; the corner panels sit outside it.
-      // A wall labelled 400 must come back as 400 of panels, not 340 with an
-      // unexplained gap at each end.
-      const expected = edge.wallId === "bottom" || edge.wallId === "top" ? 400 : 300;
+      // 400 - 30 - 30 and 300 - 30 - 30. The 340 is the spec's canonical
+      // middle-rule run (340 -> 4x75 + 40).
+      const expected = edge.wallId === "bottom" || edge.wallId === "top" ? 340 : 240;
       expect(edge.clearLength).toBe(expected);
       expect(edge.flags).toHaveLength(0);
     }
+  });
+
+  it("leaves no hole at the ends: leg + run + leg covers the wall exactly", () => {
+    const result = prep(rectangleWalls());
+    const bottom = [
+      ...result.cornerPanels.filter((p) => p.edgeId === "edge:bottom"),
+    ].sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
+    const run = result.runs.get("edge:bottom")!.faceA;
+
+    // The near leg fills [0,30], the run takes [30,370], the far leg [370,400].
+    expect(bottom[0]!.offsetAlongEdge).toBe(0);
+    expect(run.startOffset).toBe(30);
+    expect(run.startOffset + run.clearLength).toBe(370);
+    expect(bottom[1]!.offsetAlongEdge).toBe(370);
+    expect(bottom[1]!.offsetAlongEdge + bottom[1]!.width).toBe(400);
   });
 
   it("L-shape: all six corners get a panel, the concave notch included", () => {
@@ -95,11 +109,11 @@ describe("placeCornerPanels — straight joins are not corners", () => {
     expect(result.cornerPanels.some((p) => p.id.includes("bottom-left:corner:B"))).toBe(false);
   });
 
-  it("leaves the full run tileable across the join: 200 + 200 = the unsplit 400", () => {
+  it("leaves the full run tileable across the join: 170 + 170 = the unsplit 340", () => {
     const split = prep(collinearSplitWallWalls());
     const byWall = new Map(split.edges.map((e) => [e.wallId, e.clearLength]));
 
-    expect(byWall.get("bottom-left")! + byWall.get("bottom-right")!).toBe(400);
+    expect(byWall.get("bottom-left")! + byWall.get("bottom-right")!).toBe(340);
     expect(split.edges.find((e) => e.wallId === "bottom-left")!.flags).toContain("straight-join");
   });
 });

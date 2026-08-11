@@ -88,14 +88,15 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
   const extensionAtB =
     drawn?.endExtension ?? extensionFor(cornersAtB, faceSpec?.regionId, neighbourAt(edge.nodeB));
 
-  // The drawn line IS the clear span: a wall labelled 300 tiles as exactly
-  // 300 (4xR75), and 320 as 4xR75 plus an R20 in the middle. The corner panels
-  // sit outside that span, at the corner itself — deducting their legs from
-  // the run left an unexplained 30cm gap at each end of every inner face.
+  // The corner panel's leg is part of the wall, not extra to it: it fills the
+  // first 30cm, the straight run takes the middle, and the far leg fills the
+  // last 30cm. A 400 wall is 30 + 340 + 30 with nothing left over. Starting
+  // the run at 0 instead pushed both legs off the ends of the wall and left a
+  // 30cm hole at each end — which is what read as an unexplained gap.
   if (bordersRoom) {
     return {
-      startOffset: 0,
-      clearLength: geometricLength,
+      startOffset: consumedAtA,
+      clearLength: Math.max(0, geometricLength - consumedAtA - consumedAtB),
       consumedAtA,
       consumedAtB,
       extensionAtA: 0,
