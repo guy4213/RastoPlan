@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Group, Line, Text } from "react-konva";
 import type Konva from "konva";
-import type { Placement, ProjectLayout, Wall } from "@rastoplan/core";
+import type { Placement, Point, ProjectLayout, Wall } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
 import { placementCorners, wallDirection, wallNormal } from "./geometry.js";
 import { resolvedWallFrame } from "./resolvedWallFrame.js";
@@ -33,6 +33,23 @@ function colorsFor(placement: Placement): Colors {
   // partition between two rooms comes out green on both faces.
   if (!placement.faceIsInterior) return { fill: "#dbeafe", stroke: "#1d4ed8", text: "#1e3a8a" };
   return { fill: "#dcfce7", stroke: "#15803d", text: "#14532d" };
+}
+
+/**
+ * The mitre line across a corner-panel leg, running from the wall vertex to
+ * the far outer corner of the band. `atStart` says which end of the leg sits
+ * on the vertex: the leg before the run starts at its far end, the one after
+ * it at its near end.
+ */
+function foldPoints(
+  c0: Point,
+  c1: Point,
+  c2: Point,
+  c3: Point,
+  atStart: boolean
+): number[] {
+  // c0..c1 lie on the wall line, c2..c3 on the band's outer edge.
+  return atStart ? [c1.x, c1.y, c3.x, c3.y] : [c0.x, c0.y, c2.x, c2.y];
 }
 
 /** All plausible along-edge snap targets for the given placement's edge. */
@@ -78,6 +95,19 @@ export function Placements({
   const wallById = useMemo(() => new Map(walls.map((w) => [w.id, w])), [walls]);
   const depth = 8; // cm of visual thickness for the band
 
+  // One physical corner panel is two legs sharing a groupId. Labelling both
+  // printed "C30x30" and "30" next to each other on one panel, which is what
+  // made the corner read as two blocks instead of one wrapped panel.
+  const labelledIds = useMemo(() => {
+    const firstOfGroup = new Map<string, string>();
+    for (const p of placements) {
+      if (!p.groupId) continue;
+      const current = firstOfGroup.get(p.groupId);
+      if (!current || p.id < current) firstOfGroup.set(p.groupId, p.id);
+    }
+    return new Set(firstOfGroup.values());
+  }, [placements]);
+
   return (
     <>
       {placements.map((placement) => {
@@ -100,7 +130,7 @@ export function Placements({
           placement.offsetAlongEdge,
           placement.width,
           sideSign,
-          placement.kind === "corner-panel" ? depth * 1.9 : depth
+          depth
         );
         const push = { x: n.x * baseOffset, y: n.y * baseOffset };
         const points = [
@@ -207,9 +237,20 @@ export function Placements({
               closed
               fill={colors.fill}
               stroke={selected ? "#000" : colors.stroke}
-              strokeWidth={(selected ? 2 : isCornerLeg ? 2 : 1) / scale}
+              strokeWidth={(selected ? 2 : 1) / scale}
               opacity={0.92}
             />
+            {/* The 45° fold at the corner, as the AutoCAD detail draws it: one
+                panel bent around the corner, not two blocks butted together. */}
+            {isCornerLeg && (
+              <Line
+                points={foldPoints(c0, c1, c2, c3, placement.offsetAlongEdge < 0)}
+                stroke={colors.stroke}
+                strokeWidth={1 / scale}
+                opacity={0.75}
+                listening={false}
+              />
+            )}
             {(() => {
               // Only render the label when it can actually fit inside the
               // placement band (with a small margin) — otherwise the letters
@@ -219,6 +260,7 @@ export function Placements({
               const fontSize = 10 / scale;
               const labelWidthCm = labelText.length * fontSize * 0.6;
               const fits = labelWidthCm < placement.width * 0.85;
+              if (placement.groupId && !labelledIds.has(placement.id)) return null;
               if (!selected && !fits) return null;
               return (
                 <Text
