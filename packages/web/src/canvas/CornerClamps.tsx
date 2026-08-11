@@ -59,17 +59,22 @@ function computeMarkers(
     const wall = wallById.get(p.wallId);
     if (!wall) continue;
 
+    const frame = resolvedWallFrame(wall, layout);
+    // A corner clamp goes on the OUTSIDE of the corner, not on the inner face
+    // where the corner panel itself sits. A wall with a room on both sides has
+    // no outside, so it gets none.
+    const exteriorFace = p.side === "faceB" ? frame.faceAIsInterior : frame.faceBIsInterior;
+    if (!exteriorFace) continue;
+
     const atA = p.offsetAlongEdge < 0;
     const vertex = atA ? wall.innerLine[0] : wall.innerLine[1];
     const dir = wallDirection(wall);
     const n = wallNormal(wall);
-    // Nudge the cluster ~10cm off the wall line, toward the room the corner
-    // panel actually serves. On a face-B corner panel (a wall with rooms on
-    // both sides) that is the opposite direction from a face-A one.
-    const frame = resolvedWallFrame(wall, layout);
-    const towardRoom = p.side === "faceB" ? frame.outwardSign : -frame.outwardSign;
-    const inwardX = n.x * towardRoom;
-    const inwardY = n.y * towardRoom;
+    const outward = p.side === "faceB" ? -frame.outwardSign : frame.outwardSign;
+    // Sit just past the outer face, clear of its band.
+    const standoff = frame.faceBOffsetCm + 14;
+    const inwardX = n.x * outward;
+    const inwardY = n.y * outward;
     // Spread the cluster tangentially along the wall so 3 dots don't stack.
     // If we're at end A, spread into the wall (+dir); at end B, spread
     // back into the wall (-dir).
@@ -77,8 +82,8 @@ function computeMarkers(
 
     markers.push({
       key,
-      x: vertex.x + inwardX * 8,
-      y: vertex.y + inwardY * 8,
+      x: vertex.x + inwardX * standoff,
+      y: vertex.y + inwardY * standoff,
       inwardX,
       inwardY,
       alongX: dir.x * spreadSign,

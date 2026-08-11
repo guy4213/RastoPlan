@@ -8,6 +8,7 @@ import { Grid } from "./Grid.js";
 import { Walls } from "./Walls.js";
 import { Placements } from "./Placements.js";
 import { CornerClamps } from "./CornerClamps.js";
+import { StraightClamps } from "./StraightClamps.js";
 import { WeldOverlay } from "./WeldOverlay.js";
 import { ENDPOINT_SNAP_PIXELS, applyAxisLock, findEndpointSnapTarget, formatLength, snapEndpoint } from "./geometry.js";
 
@@ -432,6 +433,13 @@ export function Canvas() {
             onContextMenu={(id, x, y) =>
               setContextMenu({ kind: "placement", placementId: id, screenX: x, screenY: y })
             }
+          />
+          <StraightClamps
+            walls={walls}
+            placements={placements}
+            layout={layout}
+            rules={rules}
+            scale={view.scale}
           />
           <CornerClamps
             walls={walls}

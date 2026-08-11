@@ -37,7 +37,25 @@ export function Legend() {
             <Dot />
             <Dot />
           </span>
-          <span>קלמרות K30 בפינה</span>
+          <span>קלמרות K30 בפינה החיצונית</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            style={{
+              display: "inline-flex",
+              width: 20,
+              height: 12,
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+              flexShrink: 0,
+            }}
+          >
+            <Dot color="#0891b2" border="#164e63" />
+            <Dot color="#0891b2" border="#164e63" />
+            <Dot color="#0891b2" border="#164e63" />
+          </span>
+          <span>קלמרות K10 בתפר בין פאנלים</span>
         </div>
       </div>
       <p style={{ margin: "8px 0 0 0", color: "#64748b", fontSize: 11, lineHeight: 1.5 }}>
@@ -47,7 +65,7 @@ export function Legend() {
   );
 }
 
-function Dot() {
+function Dot({ color = "#ea580c", border = "#7c2d12" }: { color?: string; border?: string }) {
   return (
     <span
       style={{
@@ -55,8 +73,8 @@ function Dot() {
         width: 5,
         height: 5,
         borderRadius: "50%",
-        background: "#ea580c",
-        border: "1px solid #7c2d12",
+        background: color,
+        border: `1px solid ${border}`,
       }}
     />
   );
