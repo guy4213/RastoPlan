@@ -174,10 +174,10 @@ describe("tileProject — each face covers its own run", () => {
       const span = (run: Placement[]) =>
         run[run.length - 1]!.offsetAlongEdge + run[run.length - 1]!.width - run[0]!.offsetAlongEdge;
 
-      // Inner: L - 30 - 30 (a corner-panel leg at each end).
+      // Inner: the drawn length L exactly.
       // Outer: L + 20 + 20 (wrapping past each corner by the neighbour's
-      // thickness) - 10 - 10 (the overlap strip at each end). So +80.
-      expect(span(outer)).toBe(span(inner) + 80);
+      // thickness) - 10 - 10 (the overlap strip at each end). So +20.
+      expect(span(outer)).toBe(span(inner) + 20);
       expect(outer[0]!.offsetAlongEdge).toBe(-10);
     }
   });

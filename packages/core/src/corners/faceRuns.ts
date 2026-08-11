@@ -88,13 +88,14 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
   const extensionAtB =
     drawn?.endExtension ?? extensionFor(cornersAtB, faceSpec?.regionId, neighbourAt(edge.nodeB));
 
-  // The interior face keeps the historical frame exactly: its run starts at 0
-  // and simply loses a leg at each end. Only the outer face needed a real
-  // geometric extent, and moving the inner one would shift a calibrated result.
+  // The drawn line IS the clear span: a wall labelled 300 tiles as exactly
+  // 300 (4xR75), and 320 as 4xR75 plus an R20 in the middle. The corner panels
+  // sit outside that span, at the corner itself — deducting their legs from
+  // the run left an unexplained 30cm gap at each end of every inner face.
   if (bordersRoom) {
     return {
       startOffset: 0,
-      clearLength: Math.max(0, geometricLength - consumedAtA - consumedAtB),
+      clearLength: geometricLength,
       consumedAtA,
       consumedAtB,
       extensionAtA: 0,

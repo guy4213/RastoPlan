@@ -53,12 +53,13 @@ describe("placeCornerPanels — a corner panel at EVERY corner", () => {
     expect([...byGroup.values()]).toEqual([2, 2, 2, 2]);
   });
 
-  it("deducts one corner-panel leg from each end: a 400cm wall runs 340cm clear", () => {
+  it("tiles the drawn length exactly: a 400cm wall runs 400cm clear", () => {
     const result = prep(rectangleWalls());
     for (const edge of result.edges) {
-      // 400 - 30 - 30 and 300 - 30 - 30. The 340 is the spec's canonical
-      // middle-rule run (340 -> 4x75 + 40), which is a good sanity check.
-      const expected = edge.wallId === "bottom" || edge.wallId === "top" ? 340 : 240;
+      // The drawn line is the clear span; the corner panels sit outside it.
+      // A wall labelled 400 must come back as 400 of panels, not 340 with an
+      // unexplained gap at each end.
+      const expected = edge.wallId === "bottom" || edge.wallId === "top" ? 400 : 300;
       expect(edge.clearLength).toBe(expected);
       expect(edge.flags).toHaveLength(0);
     }
@@ -94,11 +95,11 @@ describe("placeCornerPanels — straight joins are not corners", () => {
     expect(result.cornerPanels.some((p) => p.id.includes("bottom-left:corner:B"))).toBe(false);
   });
 
-  it("leaves the full run tileable across the join: 170 + 170 = the unsplit 340", () => {
+  it("leaves the full run tileable across the join: 200 + 200 = the unsplit 400", () => {
     const split = prep(collinearSplitWallWalls());
     const byWall = new Map(split.edges.map((e) => [e.wallId, e.clearLength]));
 
-    expect(byWall.get("bottom-left")! + byWall.get("bottom-right")!).toBe(340);
+    expect(byWall.get("bottom-left")! + byWall.get("bottom-right")!).toBe(400);
     expect(split.edges.find((e) => e.wallId === "bottom-left")!.flags).toContain("straight-join");
   });
 });

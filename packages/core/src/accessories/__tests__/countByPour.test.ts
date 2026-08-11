@@ -45,11 +45,11 @@ describe("countAccessoriesByPour — two-pour project", () => {
 
     expect(byPour.byPour["pour-A"]).toBeDefined();
     expect(byPour.byPour["pour-B"]).toBeDefined();
-    // Both pours own two 200cm walls, each losing a 30cm corner-panel leg at
-    // both ends: ceil(140/150) = 1 strut per wall, so 2 per pour — 4 total.
-    expect(byPour.byPour["pour-A"]?.struts).toBe(2);
-    expect(byPour.byPour["pour-B"]?.struts).toBe(2);
-    expect(byPour.total.struts).toBe(4);
+    // Both pours own two 200cm walls, tiled over their full drawn length:
+    // ceil(200/150) = 2 struts per wall, so 4 per pour — 8 total.
+    expect(byPour.byPour["pour-A"]?.struts).toBe(4);
+    expect(byPour.byPour["pour-B"]?.struts).toBe(4);
+    expect(byPour.total.struts).toBe(8);
   });
 
   it("byPour.cornerClamps + byPour.straightClamps + byPour.struts sum to project totals", () => {
