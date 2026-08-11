@@ -31,9 +31,6 @@ export interface FaceRunInput {
   cornersAtA: CornerAtNode[];
   cornersAtB: CornerAtNode[];
   cornerPanelWidth: number;
-  /** overlap strip width at a convex corner on a face that borders no room */
-  protrusionAtA: number;
-  protrusionAtB: number;
   edges: Edge[];
   nodeById: Map<string, Node>;
   wallById: Map<string, Wall>;
@@ -56,8 +53,6 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
     cornersAtA,
     cornersAtB,
     cornerPanelWidth,
-    protrusionAtA,
-    protrusionAtB,
     edges,
     wallById,
   } = input;
@@ -73,10 +68,12 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
   const neighbourAt = (nodeId: string) =>
     otherWallThicknessAt(nodeId, edge, edges, wallById);
 
-  // A face that borders no room stops at the corner overlap; a face that
-  // borders a room stops at its corner panel's leg.
-  const consumedAtA = bordersRoom ? (cornerA ? cornerPanelWidth : 0) : protrusionAtA;
-  const consumedAtB = bordersRoom ? (cornerB ? cornerPanelWidth : 0) : protrusionAtB;
+  // A face that borders a room stops at its corner panel's leg. A face that
+  // borders no room gives up nothing: the outer corner is just two straight
+  // panels meeting at the outer corner point, each covering its own line right
+  // up to it. There is no corner piece and no overlap strip out there.
+  const consumedAtA = bordersRoom && cornerA ? cornerPanelWidth : 0;
+  const consumedAtB = bordersRoom && cornerB ? cornerPanelWidth : 0;
 
   // When the user drew this face as its own contour, its extent is a fact we
   // can read straight off the drawing. Only a derived face has to infer how far

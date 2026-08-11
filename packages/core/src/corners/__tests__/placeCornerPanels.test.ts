@@ -160,75 +160,34 @@ describe("placeCornerPanels — a wall with a room on both sides", () => {
   });
 });
 
-describe("placeCornerPanels — outer (convex) corner overlap", () => {
-  it("emits one overlap strip per (edge, convex-corner end) — 8 on a box", () => {
-    const result = prep(rectangleWalls());
-    expect(result.protrusions).toHaveLength(8);
-    for (const p of result.protrusions) {
-      expect(p.side).toBe("faceB");
-      expect(p.faceIsInterior).toBe(false);
-      expect(p.flags).toContain("outer-corner-protrusion");
-      // Straight panel overlapping, never a corner panel.
-      expect(p.kind).not.toBe("corner-panel");
-    }
+describe("placeCornerPanels — the outer corner is just two straight panels", () => {
+  it("emits no overlap strip at all", () => {
+    expect(prep(rectangleWalls()).protrusions).toHaveLength(0);
+    expect(prep(lShapeWalls()).protrusions).toHaveLength(0);
   });
 
-  it("is 10cm when every wall is the reference 20cm thick", () => {
-    const result = prep(rectangleWalls());
-    for (const p of result.protrusions) {
-      expect(p.width).toBe(DEFAULT_ACCESSORY_RULES.outerCornerProtrusionCm);
-    }
+  it("runs each outer face right up to the outer corner point instead", () => {
+    const run = prep(rectangleWalls()).runs.get("edge:bottom")!.faceB;
+
+    // The outer face of a 400cm wall between two 20cm walls covers the whole
+    // outer contour edge: 20 + 400 + 20. The perpendicular wall's outer face
+    // then starts exactly where this one ends.
+    expect(run.startOffset).toBe(-20);
+    expect(run.clearLength).toBe(440);
   });
 
-  it("emits nothing at the concave notch of an L — only the 5 convex corners", () => {
-    const result = prep(lShapeWalls());
-    // 5 convex L nodes × 2 walls each = 10.
-    expect(result.protrusions).toHaveLength(10);
-    const w3Protrusions = result.protrusions.filter((p) => p.edgeId === "edge:w3");
-    expect(w3Protrusions.every((p) => !p.id.endsWith(":protrusion:B"))).toBe(true);
-  });
+  it("wraps by each neighbour's own thickness, not a single global one", () => {
+    // Bottom wall 30cm, the rest 20cm: the `right` wall's outer face wraps 30
+    // past the corner it shares with the thick bottom wall and 20 at its far end.
+    const run = prep(rectangleWallsMixedThickness()).runs.get("edge:right")!.faceB;
 
-  it("honors a custom outerCornerProtrusionCm from the rules", () => {
-    const result = prep(rectangleWalls(), {
-      ...DEFAULT_ACCESSORY_RULES,
-      outerCornerProtrusionCm: 15,
-    });
-    for (const p of result.protrusions) expect(p.width).toBe(15);
+    expect(run.startOffset).toBe(-30);
+    expect(run.clearLength).toBe(30 + 300 + 20);
   });
 });
 
 describe("placeCornerPanels — the customer's mixed-thickness model", () => {
-  it("bottom wall 30cm, rest 20cm: the overlap follows the NEIGHBOUR's thickness", () => {
-    const result = prep(rectangleWallsMixedThickness());
-    const widthAt = (edgeId: string, end: "A" | "B") =>
-      result.protrusions.find((p) => p.id === `placement:${edgeId}:protrusion:${end}`)?.width;
-
-    // The bottom wall's own neighbours are `left` and `right`, both 20cm →
-    // it keeps the standard 10cm at both ends.
-    expect(widthAt("edge:bottom", "A")).toBe(10);
-    expect(widthAt("edge:bottom", "B")).toBe(10);
-
-    // `right` starts at the bottom-right corner, where its neighbour is the
-    // 30cm bottom wall → that end drops to 5cm; its far end still sees 20cm.
-    expect(widthAt("edge:right", "A")).toBe(5);
-    expect(widthAt("edge:right", "B")).toBe(10);
-
-    // `left` ends at the bottom-left corner — mirror image of `right`.
-    expect(widthAt("edge:left", "A")).toBe(10);
-    expect(widthAt("edge:left", "B")).toBe(5);
-
-    // `top` never touches the thick wall.
-    expect(widthAt("edge:top", "A")).toBe(10);
-    expect(widthAt("edge:top", "B")).toBe(10);
-  });
-
-  it("exactly two of the eight strips are reduced — the ones meeting the thick wall", () => {
-    const result = prep(rectangleWallsMixedThickness());
-    const widths = result.protrusions.map((p) => p.width).sort((a, b) => a - b);
-    expect(widths).toEqual([5, 5, 10, 10, 10, 10, 10, 10]);
-  });
-
-  it("wall thickness does not change the clear run — only the overlap", () => {
+  it("wall thickness does not change the inner clear run", () => {
     const uniform = prep(rectangleWalls());
     const mixed = prep(rectangleWallsMixedThickness());
     const lengths = (r: typeof uniform) => r.edges.map((e) => e.clearLength);

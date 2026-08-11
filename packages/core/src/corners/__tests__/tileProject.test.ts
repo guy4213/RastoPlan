@@ -79,7 +79,6 @@ describe("tileProject — the customer's two-contour drawing", () => {
     expect(countCornerUnits(two)).toBe(4);
     expect(countCornerUnits(two)).toBe(countCornerUnits(one));
     expect(two.filter((p) => p.kind === "corner-panel")).toHaveLength(8);
-    expect(two.filter((p) => p.flags.includes("outer-corner-protrusion"))).toHaveLength(8);
   });
 
   it("is unaffected by which way the individual walls were dragged", () => {
@@ -175,10 +174,9 @@ describe("tileProject — each face covers its own run", () => {
         run[run.length - 1]!.offsetAlongEdge + run[run.length - 1]!.width - run[0]!.offsetAlongEdge;
 
       // Inner: L - 30 - 30, the two corner-panel legs.
-      // Outer: L + 20 + 20 (wrapping past each corner by the neighbour's
-      // thickness) - 10 - 10 (the overlap strip at each end). So +80.
-      expect(span(outer)).toBe(span(inner) + 80);
-      expect(outer[0]!.offsetAlongEdge).toBe(-10);
+      // Outer: L + 20 + 20, wrapping to the outer corner point at each end.
+      expect(span(outer)).toBe(span(inner) + 100);
+      expect(outer[0]!.offsetAlongEdge).toBe(-20);
     }
   });
 
@@ -209,37 +207,34 @@ describe("tileProject — each face covers its own run", () => {
   });
 });
 
-describe("tileProject — 10cm rule at outer corners", () => {
-  it("rectangular room: each outer corner gets a straight 10cm protrusion on the exterior face", () => {
+describe("tileProject — corners", () => {
+  it("puts a corner panel on the room face and nothing extra on the outside", () => {
     const placements = tile(rectangleWalls());
-    const protrusions = placements.filter((p) => p.flags.includes("outer-corner-protrusion"));
 
-    // 4 outer corners × 2 meeting walls each = 8 protrusions.
-    expect(protrusions).toHaveLength(8);
-    for (const p of protrusions) {
-      expect(p.side).toBe("faceB");
-      expect(p.faceIsInterior).toBe(false);
-      expect(p.width).toBe(DEFAULT_ACCESSORY_RULES.outerCornerProtrusionCm);
-      expect(p.kind).not.toBe("corner-panel");
-    }
-    // The overlap is the OUTER half of the corner story; the inner half is a
-    // corner panel, present at these same convex corners.
+    // No stray blocks in the corners: the outside is two straight panels.
+    expect(placements.filter((p) => p.flags.includes("outer-corner-protrusion"))).toHaveLength(0);
+
     const cornerLegs = placements.filter((p) => p.kind === "corner-panel");
     expect(cornerLegs).toHaveLength(8);
     expect(cornerLegs.every((p) => p.side === "faceA")).toBe(true);
+    expect(cornerLegs.every((p) => p.width === 30)).toBe(true);
   });
 
-  it("uses the configured outerCornerProtrusionCm, not a hard-coded 10", () => {
-    const project = projectOf(rectangleWalls());
-    const custom: Project = {
-      ...project,
-      rules: { ...project.rules, outerCornerProtrusionCm: 12 },
-    };
-    for (const p of tileProjectPlacements(custom).filter((x) =>
-      x.flags.includes("outer-corner-protrusion")
-    )) {
-      expect(p.width).toBe(12);
-    }
+  it("meets the two walls' outer faces exactly at the outer corner point", () => {
+    const { layout } = tileProject(projectOf(rectangleWalls()));
+    const placements = tile(rectangleWalls());
+    const outerOf = (wallId: string) =>
+      placements
+        .filter((p) => p.edgeId === `edge:${wallId}` && p.side === "faceB")
+        .sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
+
+    // `bottom` runs 0..400 and `right` starts where it ends, so bottom's outer
+    // face must finish 20 past 400 and right's must begin 20 before 0.
+    const bottom = outerOf("bottom");
+    const last = bottom[bottom.length - 1]!;
+    expect(last.offsetAlongEdge + last.width).toBe(420);
+    expect(outerOf("right")[0]!.offsetAlongEdge).toBe(-20);
+    expect(layout.resolvedWalls).toHaveLength(4);
   });
 });
 
@@ -268,13 +263,10 @@ describe("tileProject — full pipeline coherence", () => {
     }
   });
 
-  it("returns face A, face B and protrusion placements (all three buckets non-empty)", () => {
+  it("returns both faces, each with panels", () => {
     const placements = tile(rectangleWalls());
     expect(placements.some((p) => p.side === "faceA")).toBe(true);
-    expect(
-      placements.some((p) => p.side === "faceB" && !p.flags.includes("outer-corner-protrusion"))
-    ).toBe(true);
-    expect(placements.some((p) => p.flags.includes("outer-corner-protrusion"))).toBe(true);
+    expect(placements.some((p) => p.side === "faceB")).toBe(true);
   });
 
   it("returns a layout describing what it decided", () => {

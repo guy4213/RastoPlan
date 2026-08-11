@@ -6,7 +6,6 @@ export function Legend() {
         <Swatch fill="#dcfce7" stroke="#15803d" label="פאה שגובלת בחדר" />
         <Swatch fill="#dbeafe" stroke="#1d4ed8" label="פאה שגובלת בחוץ" />
         <Swatch fill="#cffafe" stroke="#0e7490" label="פאנל פינה C30x30" />
-        <Swatch fill="#e0e7ff" stroke="#4f46e5" label="בליטת פינה חיצונית" />
         <Swatch fill="#fde68a" stroke="#a16207" label="פער עץ" />
         <Swatch fill="#fef3c7" stroke="#b45309" label="עריכה ידנית" />
         <Swatch fill="#fecaca" stroke="#b91c1c" label="דגל / דורש טיפול" />
