@@ -89,12 +89,12 @@ function computeBrackets(
 
     if (!exterior || arms.length < 2) continue;
 
-    // The two legs' outer corners are the same physical point; average out any
-    // sub-centimetre disagreement between the two walls' offsets.
-    const elbow = {
-      x: (arms[0]!.corner.x + arms[1]!.corner.x) / 2,
-      y: (arms[0]!.corner.y + arms[1]!.corner.y) / 2,
-    };
+    // The outer corner is where the two walls' OUTER FACES cross, not the
+    // perpendicular offset of the shared inner vertex. Those differ whenever
+    // the two walls have different thicknesses, and averaging them dropped the
+    // bracket somewhere inside the wall instead of on the corner.
+    const elbow =
+      intersect(arms[0]!.corner, arms[0]!.along, arms[1]!.corner, arms[1]!.along) ?? arms[0]!.corner;
     // Push the whole bracket out along the corner's bisector so it sits clear
     // of the panels rather than on top of them.
     const bisector = normalize({
@@ -120,6 +120,14 @@ function computeBrackets(
   }
 
   return brackets;
+}
+
+/** Where the infinite lines (p1 along d1) and (p2 along d2) cross. */
+function intersect(p1: Point, d1: Point, p2: Point, d2: Point): Point | null {
+  const denominator = d1.x * d2.y - d1.y * d2.x;
+  if (Math.abs(denominator) < 1e-9) return null;
+  const t = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / denominator;
+  return { x: p1.x + d1.x * t, y: p1.y + d1.y * t };
 }
 
 function normalize(v: Point): Point {
