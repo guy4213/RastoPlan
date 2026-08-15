@@ -34,6 +34,12 @@ export interface Project {
   layout?: ProjectLayout;
   /** Hand-typed quantities that replace the automatic count; never recomputed. */
   overrides?: QuantityOverrides;
+  /**
+   * How far an imported CAD drawing was shifted to bring it near the origin.
+   * Present only on imported projects; the DXF export subtracts it so the file
+   * lands back on the original drawing's coordinates.
+   */
+  cadOffsetCm?: Point;
 }
 
 /**

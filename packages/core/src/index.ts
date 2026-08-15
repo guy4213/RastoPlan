@@ -7,4 +7,5 @@ export * from "./tiling/index.js";
 export * from "./corners/index.js";
 export * from "./accessories/index.js";
 export * from "./export/index.js";
+export * from "./cad/index.js";
 export * from "./migrate/index.js";
