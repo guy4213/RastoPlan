@@ -35,7 +35,7 @@ export interface AppState {
   ui: UiState;
 }
 
-const PALETTE = ["#dc2626", "#2563eb", "#059669", "#d97706", "#7c3aed", "#0891b2"];
+export const PALETTE = ["#dc2626", "#2563eb", "#059669", "#d97706", "#7c3aed", "#0891b2"];
 
 function nowIso(): string {
   return new Date().toISOString();

@@ -12,6 +12,7 @@
     "test": "echo \"no tests yet in @rastoplan/web\""
   },
   "dependencies": {
+    "@mlightcad/libredwg-web": "^0.7.9",
     "@rastoplan/core": "workspace:*",
     "exceljs": "^4.4.0",
     "konva": "^9.3.16",
@@ -23,6 +24,7 @@
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }

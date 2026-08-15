@@ -98,6 +98,49 @@ export function Canvas() {
 
   const snapCm = ENDPOINT_SNAP_PIXELS / view.scale;
 
+  // Frame the drawing whenever the wall set is replaced wholesale — an import,
+  // or opening a saved project. Drawing or deleting a wall keeps some of the
+  // previous ids, so ordinary editing never yanks the view around.
+  const previousWallIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const ids = new Set(walls.map((w) => w.id));
+    const previous = previousWallIds.current;
+    previousWallIds.current = ids;
+
+    if (walls.length === 0) return;
+    const isReplacement = [...ids].every((id) => !previous.has(id));
+    if (!isReplacement) return;
+    if (size.width === 0 || size.height === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const wall of walls) {
+      for (const p of wall.innerLine) {
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y);
+        maxY = Math.max(maxY, p.y);
+      }
+    }
+    // A single perfectly axis-aligned wall has zero extent one way; the floor
+    // keeps the division finite.
+    const spanX = Math.max(maxX - minX, 1);
+    const spanY = Math.max(maxY - minY, 1);
+    const scale = Math.max(
+      MIN_SCALE,
+      Math.min(MAX_SCALE, 0.9 * Math.min(size.width / spanX, size.height / spanY))
+    );
+    dispatch({
+      type: "set-view",
+      view: {
+        scale,
+        offset: {
+          x: size.width / 2 - ((minX + maxX) / 2) * scale,
+          y: size.height / 2 - ((minY + maxY) / 2) * scale,
+        },
+      },
+    });
+  }, [walls, size.width, size.height, dispatch]);
+
   const stageToWorld = useCallback(
     (stageX: number, stageY: number): Point => ({
       x: (stageX - view.offset.x) / view.scale,

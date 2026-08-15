@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { Point } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
 import { ProjectsModal } from "./ProjectsModal.js";
+import { ImportCadModal } from "./ImportCadModal.js";
+import { downloadDxf } from "../export/writeDxf.js";
 
 interface FreeEndpoint {
   wallId: string;
@@ -36,10 +38,25 @@ export function Toolbar() {
   const { tool, layoutDirty, activePourId, units } = state.ui;
   const [notice, setNotice] = useState<string | null>(null);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const showNotice = (msg: string) => {
     setNotice(msg);
     window.setTimeout(() => setNotice(null), 3500);
+  };
+
+  const exportDxf = () => {
+    if (state.project.walls.length === 0) return;
+    // Put the geometry back where the source drawing had it, so the file can be
+    // laid straight over the customer's own plan.
+    downloadDxf(state.project, state.project.name, {
+      offsetCm: state.project.cadOffsetCm,
+    });
+    showNotice(
+      state.project.placements.length === 0
+        ? 'יוצא DXF (קירות בלבד — לחץ "חשב" כדי לכלול תבניות)'
+        : "יוצא DXF"
+    );
   };
 
   const closeActiveRoom = () => {
@@ -85,6 +102,27 @@ export function Toolbar() {
         title="פרויקטים"
       >
         📁 פרויקטים
+      </button>
+      <button
+        type="button"
+        onClick={() => setImportOpen(true)}
+        style={projectsButton}
+        title="ייבוא שרטוט מ-DWG או DXF"
+      >
+        📐 ייבוא DWG
+      </button>
+      <button
+        type="button"
+        onClick={exportDxf}
+        disabled={state.project.walls.length === 0}
+        style={{
+          ...projectsButton,
+          opacity: state.project.walls.length === 0 ? 0.5 : 1,
+          cursor: state.project.walls.length === 0 ? "not-allowed" : "pointer",
+        }}
+        title="ייצוא לקובץ DXF שאוטוקאד פותח"
+      >
+        💾 ייצוא DXF
       </button>
       <input
         type="text"
@@ -176,6 +214,7 @@ export function Toolbar() {
         </button>
       </div>
       <ProjectsModal open={projectsOpen} onClose={() => setProjectsOpen(false)} />
+      <ImportCadModal open={importOpen} onClose={() => setImportOpen(false)} />
     </header>
   );
 }
