@@ -34,6 +34,13 @@ export interface Project {
   layout?: ProjectLayout;
   /** Hand-typed quantities that replace the automatic count; never recomputed. */
   overrides?: QuantityOverrides;
+  /**
+   * Available units keyed by the exact Hebrew BOM product label. Imported from
+   * the customer's Excel `מלאי` column. When this object exists, a missing
+   * label means zero stock; projects without it retain the legacy unlimited
+   * catalog until an inventory file is imported.
+   */
+  inventory?: Record<string, number>;
 }
 
 /**
@@ -289,7 +296,10 @@ export interface Panel {
   secondLegWidth?: number;
   /** true = a leading panel type (emphasized by the customer) */
   isLeading: boolean;
-  /** false = not allowed for auto-tiling (manual exception only) */
+  /**
+   * Coarse legacy availability when no project inventory was imported. A
+   * finite `Project.inventory` supersedes this flag for automatic tiling.
+   */
   inStock: boolean;
   /** 'straight' fills a plain wall run; 'corner' (e.g. C30x30) wraps an L corner; 'corner-axial' is the axial corner variant, never auto-selected */
   kind: "straight" | "corner" | "corner-axial";

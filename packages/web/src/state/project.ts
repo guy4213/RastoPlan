@@ -148,6 +148,7 @@ export type Action =
   | { type: "set-view"; view: UiState["view"] }
   | { type: "set-units"; units: Units }
   | { type: "set-ortho-lock"; value: boolean }
+  | { type: "set-inventory"; inventory: Record<string, number> }
   | { type: "add-pour" }
   | { type: "update-pour"; pourId: string; patch: Partial<Pour> }
   | { type: "delete-pour"; pourId: string }
@@ -178,6 +179,25 @@ function withUpdatedAt(project: Project): Project {
  */
 function withClearedLayout(project: Project): Project {
   return { ...project, placements: [], layout: undefined };
+}
+
+/**
+ * Repairs projects saved by the first inventory implementation, which copied
+ * a blank/zero Excel cell into `Panel.inStock` and persisted most of the
+ * catalog as false. The finite inventory is now authoritative; every catalog
+ * row represented in that file must stay eligible so the engine can draw a
+ * missing unit in red, and a later positive import can immediately use it.
+ */
+function withInventoryEligibleCatalog(project: Project): Project {
+  if (!project.inventory) return project;
+  const panels = project.catalog.panels.map((panel) =>
+    Object.prototype.hasOwnProperty.call(project.inventory, panel.bomLabel) && !panel.inStock
+      ? { ...panel, inStock: true }
+      : panel
+  );
+  return panels.some((panel, index) => panel !== project.catalog.panels[index])
+    ? { ...project, catalog: { ...project.catalog, panels } }
+    : project;
 }
 
 /**
@@ -280,7 +300,7 @@ function openProject(raw: Project): { project: Project; notice: string | null } 
   const current = stale ? withClearedLayout(migrated) : migrated;
 
   const { project: healedProject, healed } = withHealedThickness(current);
-  const project = withDerivedPairing(healedProject);
+  const project = withInventoryEligibleCatalog(withDerivedPairing(healedProject));
 
   const notice =
     healed > 0
@@ -416,6 +436,26 @@ export function reduce(state: AppState, action: Action): AppState {
       return { ...state, ui: { ...state.ui, units: action.units } };
     case "set-ortho-lock":
       return { ...state, ui: { ...state.ui, orthoLock: action.value } };
+    case "set-inventory": {
+      const inventory = Object.fromEntries(
+        Object.entries(action.inventory).map(([label, value]) => [
+          label,
+          Number.isFinite(value) && value > 0 ? Math.floor(value) : 0,
+        ])
+      );
+      return {
+        ...state,
+        project: withUpdatedAt(
+          withInventoryEligibleCatalog(
+            withClearedLayout({
+              ...state.project,
+              inventory,
+            })
+          )
+        ),
+        ui: { ...state.ui, layoutDirty: state.project.walls.length > 0, notice: null },
+      };
+    }
 
     case "add-pour": {
       const order = state.project.pours.length;

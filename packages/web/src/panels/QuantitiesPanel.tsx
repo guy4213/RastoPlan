@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   ACCESSORY_ITEMS,
   applyQuantityOverrides,
@@ -6,12 +6,14 @@ import {
   countAccessoriesByPour,
   countPanelsByPour,
   type AccessoryCount,
+  type BomRow,
   type PanelCount,
   type Project,
   type QuantityOverrides,
 } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
 import { downloadBomXlsx } from "../export/writeBomXlsx.js";
+import { readInventoryXlsx } from "../import/readInventoryXlsx.js";
 
 /** The two rows the customer's own sheets type by hand — see docs/open-questions.md §3. */
 const OVERRIDABLE_ROWS = new Set<keyof AccessoryCount>(["cornerClamps", "straightClamps"]);
@@ -19,6 +21,11 @@ const OVERRIDABLE_ROWS = new Set<keyof AccessoryCount>(["cornerClamps", "straigh
 export function QuantitiesPanel() {
   const { state, dispatch } = useProject();
   const { project } = state;
+  const inventoryInputRef = useRef<HTMLInputElement>(null);
+  const [inventoryNotice, setInventoryNotice] = useState<{
+    kind: "success" | "error";
+    text: string;
+  } | null>(null);
 
   const { accessories, automatic, panels, pourNames, totalPourIds } = useMemo(() => {
     const empty = {
@@ -48,40 +55,111 @@ export function QuantitiesPanel() {
   }, [project]);
 
   const hasPlacements = project.placements.length > 0 && !!project.layout;
-  const diagnostics = project.layout?.diagnostics ?? [];
+  // Inventory already has two purpose-built views: individual red placements
+  // on the canvas and one aggregated row per missing product below. Repeating
+  // the same shortage once per wall face under "engine notes" turns a quantity
+  // of three into several nearly identical messages, so that section is kept
+  // for geometry/calculation diagnostics only.
+  const diagnostics = (project.layout?.diagnostics ?? []).filter(
+    (diagnostic) => !diagnostic.code.startsWith("inventory-")
+  );
+
+  const bomTemplate = useMemo(
+    () =>
+      buildBomTemplate({
+        header: {
+          companyName: "",
+          projectName: project.name,
+          note: "קומה טיפוסית",
+          date: new Date().toLocaleDateString("he-IL"),
+        },
+        catalog: project.catalog,
+        pourIds: totalPourIds,
+        pourNames: totalPourIds.map((id) => pourNames.get(id) ?? id),
+        panels,
+        accessories,
+        inventory: project.inventory,
+      }),
+    [accessories, panels, pourNames, project.catalog, project.inventory, project.name, totalPourIds]
+  );
 
   function setOverride(field: keyof QuantityOverrides, pourId: string, value: number | null) {
     dispatch({ type: "set-quantity-override", field, pourId, value });
   }
 
   async function exportBom() {
-    const template = buildBomTemplate({
-      header: {
-        companyName: "",
-        projectName: project.name,
-        note: "קומה טיפוסית",
-        date: new Date().toLocaleDateString("he-IL"),
-      },
-      catalog: project.catalog,
-      pourIds: totalPourIds,
-      pourNames: totalPourIds.map((id) => pourNames.get(id) ?? id),
-      panels,
-      accessories,
-    });
-    await downloadBomXlsx(template, `חישוב כמויות — ${project.name}`);
+    await downloadBomXlsx(bomTemplate, `חישוב כמויות — ${project.name}`);
+  }
+
+  async function importInventory(file: File) {
+    try {
+      const result = await readInventoryXlsx(await file.arrayBuffer());
+      dispatch({ type: "set-inventory", inventory: result.inventory });
+      setInventoryNotice({
+        kind: "success",
+        text: `המלאי נטען: ${result.importedRows} פריטים מהגיליון ${result.sheetName}. יש ללחוץ חשב.`,
+      });
+    } catch (error) {
+      setInventoryNotice({
+        kind: "error",
+        text: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      if (inventoryInputRef.current) inventoryInputRef.current.value = "";
+    }
   }
 
   return (
-    <aside style={{ overflow: "auto", direction: "rtl" }}>
+    <aside
+      style={{
+        height: "100%",
+        minHeight: 0,
+        boxSizing: "border-box",
+        overflowY: "auto",
+        overflowX: "hidden",
+        direction: "rtl",
+        scrollbarGutter: "stable",
+      }}
+    >
       <div style={{ padding: 12, borderBottom: "1px solid #e2e8f0" }}>
         <h2 style={{ margin: "0 0 4px 0", fontSize: 14, fontWeight: 600 }}>כמויות</h2>
         <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>
           מתעדכן חי לכל שינוי בקנבס. כשאין פריסה עדיין — הרץ "חשב".
         </p>
-        {hasPlacements && (
-          <button type="button" onClick={exportBom} style={exportButtonStyle}>
-            ייצוא BOM לאקסל
+        <input
+          ref={inventoryInputRef}
+          type="file"
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void importInventory(file);
+          }}
+        />
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          <button
+            type="button"
+            onClick={() => inventoryInputRef.current?.click()}
+            style={exportButtonStyle}
+          >
+            ייבוא מלאי מאקסל
           </button>
+          {hasPlacements && (
+            <button type="button" onClick={exportBom} style={exportButtonStyle}>
+              ייצוא BOM לאקסל
+            </button>
+          )}
+        </div>
+        {inventoryNotice && (
+          <p
+            style={{
+              margin: "6px 0 0",
+              fontSize: 11,
+              color: inventoryNotice.kind === "success" ? "#047857" : "#b91c1c",
+            }}
+          >
+            {inventoryNotice.text}
+          </p>
         )}
       </div>
 
@@ -92,6 +170,8 @@ export function QuantitiesPanel() {
       )}
 
       {diagnostics.length > 0 && <Diagnostics items={diagnostics} />}
+
+      {hasPlacements && project.inventory && <InventoryTable rows={bomTemplate.rows} />}
 
       {hasPlacements && (
         <>
@@ -125,6 +205,80 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
     <div style={{ padding: "8px 12px", background: "#f1f5f9", fontSize: 12, fontWeight: 600, color: "#0f172a", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0" }}>
       {children}
     </div>
+  );
+}
+
+function InventoryTable({ rows }: { rows: BomRow[] }) {
+  const shortageRows = rows.filter(
+    (row) => !row.isSectionLabel && row.requiredQty > row.inventoryQty
+  );
+
+  if (shortageRows.length === 0) {
+    return (
+      <>
+        <SectionHeader>מלאי מול דרישה</SectionHeader>
+        <div
+          style={{
+            padding: "10px 12px",
+            color: "#047857",
+            background: "#ecfdf5",
+            fontSize: 12,
+            fontWeight: 600,
+          }}
+        >
+          המלאי מספיק לכל הפריטים
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <SectionHeader>
+        מלאי מול דרישה
+        <span
+          style={{
+            marginInlineStart: 6,
+            fontSize: 11,
+            fontWeight: 500,
+            color: "#b91c1c",
+          }}
+        >
+          {`${shortageRows.length} חוסרים`}
+        </span>
+      </SectionHeader>
+      <table style={tableStyle}>
+        <thead>
+          <tr>
+            <th style={{ ...thStyle, textAlign: "right" }}>פריט</th>
+            <th style={thStyle}>מלאי</th>
+            <th style={thStyle}>דרוש</th>
+            <th style={thStyle}>חסר</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shortageRows.map((row) => {
+            const shortage = Math.max(0, row.requiredQty - row.inventoryQty);
+            return (
+              <tr key={row.label} style={{ background: "#fef2f2" }}>
+                <td style={tdLabelStyle}>{row.label}</td>
+                <td style={tdStyle}>{row.inventoryQty}</td>
+                <td style={tdStyle}>{row.requiredQty}</td>
+                <td
+                  style={{
+                    ...tdStyle,
+                    color: "#b91c1c",
+                    fontWeight: 600,
+                  }}
+                >
+                  {shortage}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </>
   );
 }
 
@@ -343,7 +497,7 @@ function emptyAccessory(): AccessoryCount {
 
 const exportButtonStyle: React.CSSProperties = {
   marginTop: 8,
-  width: "100%",
+  flex: 1,
   padding: "6px 10px",
   fontSize: 12,
   fontWeight: 600,

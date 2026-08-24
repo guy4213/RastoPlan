@@ -89,6 +89,19 @@ describe("buildBomTemplate — product rows", () => {
     expect(unused.totalSqm).toBe(0);
     expect(unused.perPour).toEqual([0]);
   });
+
+  it("copies finite inventory by exact product label and treats missing rows as zero", () => {
+    const input = inputFor(rectangleWalls(), ["pour-1"], ["יציקה 1"]);
+    input.inventory = {
+      "פנאל 75/300": 12,
+      "קלמרה רגילה לתבניות GT": 40,
+    };
+    const rows = new Map(buildBomTemplate(input).rows.map((row) => [row.label, row]));
+
+    expect(rows.get("פנאל 75/300")?.inventoryQty).toBe(12);
+    expect(rows.get("קלמרה רגילה לתבניות GT")?.inventoryQty).toBe(40);
+    expect(rows.get("פנאל 70/300")?.inventoryQty).toBe(0);
+  });
 });
 
 describe("buildBomTemplate — מר לתבנית", () => {
@@ -208,18 +221,20 @@ describe("toGrid — sheet layout", () => {
   it("puts the header block on rows 1-5, leaves 6-7 blank, headers on row 8", () => {
     const grid = toGrid(singlePourTemplate());
 
-    expect(grid[0]?.slice(0, 2)).toEqual(["שם החברה :", "נפתלי ניסן"]);
-    expect(grid[1]?.slice(0, 2)).toEqual(["שם הפרוייקט :", "קרית גת בניין B"]);
-    expect(grid[2]?.slice(0, 2)).toEqual(["הערה :", "קומה טיפוסית"]);
-    expect(grid[3]?.slice(0, 2)).toEqual(["תאריך :", "11.06.2026"]);
+    expect(grid[0]?.slice(0, 3)).toEqual(["שם החברה :", null, "נפתלי ניסן"]);
+    expect(grid[1]?.slice(0, 3)).toEqual(["שם הפרוייקט :", null, "קרית גת בניין B"]);
+    expect(grid[2]?.slice(0, 3)).toEqual(["הערה :", null, "קומה טיפוסית"]);
+    expect(grid[3]?.slice(0, 3)).toEqual(["תאריך :", null, "11.06.2026"]);
     expect(grid[4]?.[0]).toBe('סה"כ מ"ר :');
-    expect(grid[4]?.[1]).toBe(singlePourTemplate().totalSqm);
+    expect(grid[4]?.[1]).toBeNull();
+    expect(grid[4]?.[2]).toBe(singlePourTemplate().totalSqm);
 
     expect(grid[5]?.every((c) => c === null)).toBe(true);
     expect(grid[6]?.every((c) => c === null)).toBe(true);
 
     expect(grid[7]).toEqual([
       "תאור מוצר",
+      "מלאי ",
       "כמות דרושה לפרוייקט",
       "מר לתבנית",
       'סה"כ מר ',
@@ -237,10 +252,10 @@ describe("toGrid — sheet layout", () => {
     for (const row of grid) expect(row).toHaveLength(width);
   });
 
-  it("lays a product row out as label | qty | m² per unit | total m² | per-pour", () => {
+  it("lays a product row out as label | inventory | qty | m² per unit | total m² | per-pour", () => {
     const grid = toGrid(singlePourTemplate());
     const row = grid.find((r) => r[0] === "פנאל 30/30/300")!;
 
-    expect(row).toEqual(["פנאל 30/30/300", 4, 1.8, 7.2, 4]);
+    expect(row).toEqual(["פנאל 30/30/300", 0, 4, 1.8, 7.2, 4]);
   });
 });

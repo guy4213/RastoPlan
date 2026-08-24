@@ -677,3 +677,81 @@ describe("a layout from an older engine is never rendered", () => {
     expect(after.ui.layoutDirty).toBe(false);
   });
 });
+
+describe("imported inventory", () => {
+  it("stores blank-as-zero values without erasing catalog types, and invalidates the old layout", () => {
+    const before = run(stateWith(twoContourRoom(20)), { type: "compute" });
+    expect(before.project.layout).toBeDefined();
+    // Reproduce a project persisted by the first inventory implementation:
+    // blank cells had been copied into every catalog `inStock` flag.
+    const contaminated: AppState = {
+      ...before,
+      project: {
+        ...before.project,
+        catalog: {
+          ...before.project.catalog,
+          panels: before.project.catalog.panels.map((panel) => ({ ...panel, inStock: false })),
+        },
+      },
+    };
+
+    const after = run(contaminated, {
+      type: "set-inventory",
+      inventory: {
+        "פנאל 75/300": 0,
+        "פנאל 50/300": 4,
+        "פנאל 40/300": 0,
+        "פנאל 30/30/300": 4,
+      },
+    });
+
+    expect(after.project.inventory).toEqual({
+      "פנאל 75/300": 0,
+      "פנאל 50/300": 4,
+      "פנאל 40/300": 0,
+      "פנאל 30/30/300": 4,
+    });
+    // Inventory and catalog availability are separate: a zero-stock type must
+    // remain available for a red "missing" placement in the desired layout.
+    expect(after.project.catalog.panels.find((panel) => panel.type === "R75")?.inStock).toBe(true);
+    expect(after.project.catalog.panels.find((panel) => panel.type === "R50")?.inStock).toBe(true);
+    expect(after.project.catalog.panels.find((panel) => panel.type === "R40")?.inStock).toBe(true);
+    expect(after.project.layout).toBeUndefined();
+    expect(after.project.placements).toEqual([]);
+    expect(after.ui.layoutDirty).toBe(true);
+  });
+
+  it("repairs persisted false catalog flags when reopening an inventoried project", () => {
+    const project = projectWith([]);
+    project.inventory = { "פנאל 75/300": 38, "פנאל 50/300": 0 };
+    project.catalog = {
+      ...project.catalog,
+      panels: project.catalog.panels.map((panel) => ({ ...panel, inStock: false })),
+    };
+
+    const reopened = initialAppState(project);
+
+    expect(reopened.project.catalog.panels.find((panel) => panel.type === "R75")?.inStock).toBe(true);
+    expect(reopened.project.catalog.panels.find((panel) => panel.type === "R50")?.inStock).toBe(true);
+    // C15 has no row in the imported sheet, so unrelated catalog choices are
+    // not rewritten by the repair.
+    expect(reopened.project.catalog.panels.find((panel) => panel.type === "C15x15")?.inStock).toBe(false);
+  });
+
+  it("normalizes invalid and fractional reducer input defensively", () => {
+    const after = run(stateWith([]), {
+      type: "set-inventory",
+      inventory: {
+        "פנאל 75/300": Number.NaN,
+        "פנאל 50/300": -2,
+        "פנאל 40/300": 3.8,
+      },
+    });
+
+    expect(after.project.inventory).toEqual({
+      "פנאל 75/300": 0,
+      "פנאל 50/300": 0,
+      "פנאל 40/300": 3,
+    });
+  });
+});

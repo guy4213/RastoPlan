@@ -35,7 +35,9 @@ export function App() {
           style={{
             gridArea: "left",
             borderInlineEnd: "1px solid #e2e8f0",
-            overflow: "auto",
+            minHeight: 0,
+            overflowY: "auto",
+            overflowX: "hidden",
             direction: "rtl",
           }}
         >
@@ -47,7 +49,14 @@ export function App() {
         <div style={{ gridArea: "canvas", overflow: "hidden", display: "flex" }}>
           <Canvas />
         </div>
-        <aside style={{ gridArea: "right", borderInlineStart: "1px solid #e2e8f0", overflow: "hidden" }}>
+        <aside
+          style={{
+            gridArea: "right",
+            minHeight: 0,
+            borderInlineStart: "1px solid #e2e8f0",
+            overflow: "hidden",
+          }}
+        >
           <QuantitiesPanel />
         </aside>
       </div>

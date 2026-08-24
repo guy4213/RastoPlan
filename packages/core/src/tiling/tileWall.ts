@@ -6,6 +6,7 @@ import type {
   PlacementSide,
 } from "../types.js";
 import { selectPanels } from "./selectPanels.js";
+import type { PanelAvailability } from "./selectPanels.js";
 import { arrangePanels } from "./arrangePanels.js";
 
 export interface TileWallTarget {
@@ -43,9 +44,10 @@ export function tileWall(
   edge: Edge,
   target: TileWallTarget,
   catalog: PanelCatalog,
-  rules: AccessoryRules
+  rules: AccessoryRules,
+  availability?: PanelAvailability
 ): Placement[] {
-  const selection = selectPanels(target.clearLength, catalog, rules);
+  const selection = selectPanels(target.clearLength, catalog, rules, availability);
   const common = {
     edgeId: edge.id,
     wallId: target.wallId,
@@ -55,7 +57,7 @@ export function tileWall(
     source: "auto" as const,
   };
 
-  if (selection.flags.includes("gap-out-of-range")) {
+  if (selection.flags.length > 0) {
     return [
       {
         ...common,
@@ -64,20 +66,36 @@ export function tileWall(
         panelType: "",
         offsetAlongEdge: target.startOffset,
         width: target.clearLength,
-        flags: ["gap-out-of-range"],
+        flags: selection.flags,
       },
     ];
   }
 
   const arranged = arrangePanels(selection.panels, selection.gap);
 
-  return arranged.map((item, index) => ({
-    ...common,
-    id: `placement:${edge.id}:${target.side}:${index}`,
-    kind: item.kind,
-    panelType: item.kind === "panel" ? item.panel.type : "timber",
-    offsetAlongEdge: target.startOffset + item.offsetAlongEdge,
-    width: item.width,
-    flags: [],
-  }));
+  // Keep real and missing units as separate placements. The selector returns
+  // a complete layout even when stock is short; only counts beyond the
+  // available quantity receive the red inventory flag on the canvas.
+  const stockedRemaining: Record<string, number> = {};
+  for (const panel of selection.panels) {
+    stockedRemaining[panel.type] = (stockedRemaining[panel.type] ?? 0) + 1;
+  }
+  for (const [type, missing] of Object.entries(selection.missingPanelsByType)) {
+    stockedRemaining[type] = Math.max(0, (stockedRemaining[type] ?? 0) - missing);
+  }
+
+  return arranged.map((item, index) => {
+    const panelType = item.kind === "panel" ? item.panel.type : "timber";
+    const stocked = item.kind === "panel" && (stockedRemaining[panelType] ?? 0) > 0;
+    if (stocked) stockedRemaining[panelType] = (stockedRemaining[panelType] ?? 0) - 1;
+    return {
+      ...common,
+      id: `placement:${edge.id}:${target.side}:${index}`,
+      kind: item.kind,
+      panelType,
+      offsetAlongEdge: target.startOffset + item.offsetAlongEdge,
+      width: item.width,
+      flags: item.kind === "panel" && !stocked ? ["inventory-shortage"] : [],
+    };
+  });
 }

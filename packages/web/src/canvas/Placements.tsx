@@ -162,11 +162,13 @@ export function Placements({
         const isCornerLeg = placement.kind === "corner-panel";
 
         const labelText =
-          placement.kind === "timber"
-            ? `עץ ${Math.round(placement.width)}`
-            : placement.flags.includes("outer-corner-protrusion")
-              ? `+${Math.round(placement.width)}`
-              : placement.panelType || `${Math.round(placement.width)}`;
+          placement.flags.includes("inventory-shortage")
+            ? `חסר ${placement.panelType}`
+            : placement.kind === "timber"
+              ? `עץ ${Math.round(placement.width)}`
+              : placement.flags.includes("outer-corner-protrusion")
+                ? `+${Math.round(placement.width)}`
+                : placement.panelType || `${Math.round(placement.width)}`;
 
         // Corner panels and outer-corner protrusions come from the corners
         // layer and don't slide along the wall — leave them non-draggable

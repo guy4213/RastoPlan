@@ -46,7 +46,8 @@ export interface FaceRunInput {
   geometricLength: number;
   cornersAtA: CornerAtNode[];
   cornersAtB: CornerAtNode[];
-  cornerPanelWidth: number;
+  /** selected physical corner panel width by CornerAtNode.id */
+  cornerPanelWidthById: ReadonlyMap<string, number>;
   rules: AccessoryRules;
   edges: Edge[];
   nodeById: Map<string, Node>;
@@ -69,7 +70,7 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
     geometricLength,
     cornersAtA,
     cornersAtB,
-    cornerPanelWidth,
+    cornerPanelWidthById,
     rules,
     edges,
     wallById,
@@ -89,8 +90,8 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
   // borders no room gives up nothing: the outer corner is just two straight
   // panels meeting at the outer corner point, each covering its own line right
   // up to it. There is no corner piece and no overlap strip out there.
-  const consumedAtA = bordersRoom && cornerA ? cornerPanelWidth : 0;
-  const consumedAtB = bordersRoom && cornerB ? cornerPanelWidth : 0;
+  const consumedAtA = bordersRoom && cornerA ? (cornerPanelWidthById.get(cornerA.id) ?? 0) : 0;
+  const consumedAtB = bordersRoom && cornerB ? (cornerPanelWidthById.get(cornerB.id) ?? 0) : 0;
 
   // When the user drew this face as its own contour, its extent is a fact we
   // can read straight off the drawing. Only a derived face has to infer how far

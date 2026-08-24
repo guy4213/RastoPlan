@@ -1,8 +1,10 @@
 import type {
   AccessoryRules,
+  Diagnostic,
   Edge,
   Node,
   PanelCatalog,
+  Panel,
   Placement,
   PlacementSide,
   ResolvedWall,
@@ -17,6 +19,8 @@ export interface PlaceCornerPanelsInput {
   walls: Wall[];
   catalog: PanelCatalog;
   rules: AccessoryRules;
+  /** Mutable remaining stock per pour and panel type; omitted = unlimited. */
+  availablePanelCountsByPour?: Record<string, Record<string, number>>;
 }
 
 export interface PlaceCornerPanelsResult {
@@ -42,6 +46,7 @@ export interface PlaceCornerPanelsResult {
    * than the inner one.
    */
   runs: Map<string, Record<PlacementSide, FaceRun>>;
+  diagnostics: Diagnostic[];
 }
 
 /**
@@ -60,13 +65,51 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
   const nodeById = new Map(resolution.nodes.map((n) => [n.id, n]));
   const wallById = new Map(walls.map((w) => [w.id, w]));
 
-  const cornerPanel = pickCornerPanel(catalog);
-  const cornerPanelWidth = cornerPanel?.width ?? 30;
-  const cornerPanelType = cornerPanel?.type ?? "C30x30";
-
   const cornerPanels: Placement[] = [];
   const protrusions: Placement[] = [];
   const runs = new Map<string, Record<PlacementSide, FaceRun>>();
+  const diagnostics: Diagnostic[] = [];
+  const cornerPanelById = new Map<string, Panel>();
+  const cornerPanelWidthById = new Map<string, number>();
+  const missingCornerIds = new Set<string>();
+
+  // Reserve one physical corner unit before calculating the adjacent straight
+  // runs. Both emitted legs then share this reservation through corner.id.
+  for (const corner of resolution.corners) {
+    const resolvedWall = resolution.wallByEdgeId.get(corner.edgeAId);
+    const pourId = resolvedWall?.pourId ?? "";
+    const availability = input.availablePanelCountsByPour?.[pourId];
+    const stockedPanel = pickCornerPanel(catalog, availability);
+    // No stocked corner fits: retain the preferred theoretical corner panel
+    // and flag only that physical unit as missing. Its two legs still share
+    // one groupId, so both the canvas and BOM understand it as one panel.
+    const panel = stockedPanel ?? pickCornerPanel(catalog, undefined, availability !== undefined);
+    if (!panel) {
+      diagnostics.push({
+        code: "inventory-corner-panel-shortage",
+        severity: "error",
+        message: "לא נמצא בקטלוג פאנל פינה עבור אחת הפינות",
+        wallIds: [corner.edgeAId, corner.edgeBId].map((id) => id.replace(/^edge:/, "")),
+        nodeIds: [corner.nodeId],
+      });
+      continue;
+    }
+    if (availability && !stockedPanel) {
+      missingCornerIds.add(corner.id);
+      diagnostics.push({
+        code: "inventory-corner-panel-shortage",
+        severity: "error",
+        message: `חסר במלאי פאנל פינה ${panel.type}`,
+        wallIds: [corner.edgeAId, corner.edgeBId].map((id) => id.replace(/^edge:/, "")),
+        nodeIds: [corner.nodeId],
+      });
+    }
+    cornerPanelById.set(corner.id, panel);
+    cornerPanelWidthById.set(corner.id, panel.width);
+    if (availability && stockedPanel) {
+      availability[panel.type] = Math.max(0, (availability[panel.type] ?? 0) - 1);
+    }
+  }
 
   const cornersByEdgeId = new Map<string, typeof resolution.corners>();
   for (const corner of resolution.corners) {
@@ -103,6 +146,13 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
       else if (node.type === "L" && endCorners[end].length === 0) {
         pushOnce(flags, "unresolved-corner-side");
       }
+      if (
+        endCorners[end].some(
+          (corner) => !cornerPanelById.has(corner.id) || missingCornerIds.has(corner.id)
+        )
+      ) {
+        pushOnce(flags, "inventory-shortage");
+      }
     }
 
     const runFor = (face: PlacementSide): FaceRun =>
@@ -113,7 +163,7 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
         geometricLength,
         cornersAtA: endCorners.A,
         cornersAtB: endCorners.B,
-        cornerPanelWidth,
+        cornerPanelWidthById,
         rules,
         edges: resolution.edges,
         nodeById,
@@ -129,6 +179,9 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
 
     for (const end of ["A", "B"] as const) {
       for (const corner of endCorners[end]) {
+        const cornerPanel = cornerPanelById.get(corner.id);
+        if (!cornerPanel) continue;
+        const cornerPanelWidth = cornerPanel.width;
         const face = faceForRegion(resolvedWall, corner.regionId);
         if (!face) continue;
         const run = faceRuns[face];
@@ -142,12 +195,12 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
           side: face,
           faceIsInterior: true,
           kind: "corner-panel",
-          panelType: cornerPanelType,
+          panelType: cornerPanel.type,
           offsetAlongEdge:
             end === "A" ? run.startOffset - cornerPanelWidth : run.startOffset + run.clearLength,
           width: cornerPanelWidth,
           source: "auto",
-          flags: [],
+          flags: missingCornerIds.has(corner.id) ? ["inventory-shortage"] : [],
         });
 
       }
@@ -156,7 +209,7 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
     return { ...edge, clearLength, flags };
   });
 
-  return { cornerPanels, protrusions, edges: adjustedEdges, runs };
+  return { cornerPanels, protrusions, edges: adjustedEdges, runs, diagnostics };
 }
 
 function cornersAt(
@@ -179,9 +232,18 @@ function faceForRegion(wall: ResolvedWall, regionId: string): PlacementSide | nu
  * layout uses the customer's leading one; taking the first in-stock match
  * would silently pick C15x15 just because it sorts first.
  */
-function pickCornerPanel(catalog: PanelCatalog) {
-  const corners = catalog.panels.filter((p) => p.kind === "corner" && p.inStock);
-  return corners.find((p) => p.isLeading) ?? corners[0];
+function pickCornerPanel(
+  catalog: PanelCatalog,
+  availability?: Readonly<Record<string, number>>,
+  inventoryDefinesAvailability = availability !== undefined
+) {
+  const corners = catalog.panels.filter(
+    (p) =>
+      p.kind === "corner" &&
+      (p.inStock || inventoryDefinesAvailability) &&
+      (availability === undefined || (availability[p.type] ?? 0) > 0)
+  );
+  return corners.find((p) => p.isLeading) ?? [...corners].sort((a, b) => b.width - a.width)[0];
 }
 
 function pushOnce(flags: string[], flag: string): void {

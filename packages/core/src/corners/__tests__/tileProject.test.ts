@@ -319,6 +319,49 @@ describe("tileProject — full pipeline coherence", () => {
   });
 });
 
+describe("tileProject — finite imported inventory", () => {
+  it("keeps a zero-stock design visible but flags every unavailable physical panel", () => {
+    const project = projectOf(rectangleWalls());
+    project.inventory = Object.fromEntries(
+      project.catalog.panels.map((panel) => [panel.bomLabel, 0])
+    );
+
+    const { placements, layout } = tileProject(project);
+
+    const panels = placements.filter(
+      (placement) => placement.kind === "panel" || placement.kind === "corner-panel"
+    );
+    expect(panels.length).toBeGreaterThan(0);
+    expect(panels.every((placement) => placement.flags.includes("inventory-shortage"))).toBe(true);
+    expect(layout.diagnostics.some((diagnostic) => diagnostic.code === "inventory-corner-panel-shortage")).toBe(true);
+    expect(layout.diagnostics.some((diagnostic) => diagnostic.code === "inventory-straight-panel-shortage")).toBe(true);
+  });
+
+  it("uses exactly the five stocked R75 panels and marks only later R75 units as missing", () => {
+    const project = projectOf(rectangleWalls());
+    project.inventory = Object.fromEntries(
+      project.catalog.panels.map((panel) => [panel.bomLabel, 0])
+    );
+    project.inventory["פנאל 75/300"] = 5;
+    // The original inventory code persisted these flags as false. Finite
+    // inventory must supersede that stale catalog state.
+    project.catalog = {
+      ...project.catalog,
+      panels: project.catalog.panels.map((panel) => ({ ...panel, inStock: false })),
+    };
+
+    const { placements } = tileProject(project);
+    const r75 = placements.filter((placement) => placement.panelType === "R75");
+
+    expect(
+      r75.filter((placement) => !placement.flags.includes("inventory-shortage"))
+    ).toHaveLength(5);
+    expect(
+      r75.filter((placement) => placement.flags.includes("inventory-shortage")).length
+    ).toBeGreaterThan(0);
+  });
+});
+
 describe("tileProject — variable wall thickness", () => {
   it("deriveOuterLine offsets each wall by its own thickness (not a global constant)", () => {
     const thin: Wall = {

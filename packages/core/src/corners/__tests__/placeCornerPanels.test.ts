@@ -98,6 +98,39 @@ describe("placeCornerPanels — a corner panel at EVERY corner", () => {
     // The catalog also stocks C15x15/C20x20/C25x25 ahead of C30x30.
     expect(result.cornerPanels.every((p) => p.width === 30)).toBe(true);
   });
+
+  it("falls back to another corner size when the leading panel has no inventory", () => {
+    const result = placeCornerPanels({
+      resolution: resolveWalls(rectangleWalls()),
+      walls: rectangleWalls(),
+      catalog: DEFAULT_PANEL_CATALOG,
+      rules: DEFAULT_ACCESSORY_RULES,
+      availablePanelCountsByPour: {
+        "pour-1": { C30x30: 0, C25x25: 4 },
+      },
+    });
+
+    expect(cornerUnits(result.cornerPanels)).toBe(4);
+    expect(result.cornerPanels.every((panel) => panel.panelType === "C25x25")).toBe(true);
+    expect(result.edges.find((edge) => edge.wallId === "bottom")?.clearLength).toBe(350);
+  });
+
+  it("keeps missing corner units in the layout and flags only those units", () => {
+    const result = placeCornerPanels({
+      resolution: resolveWalls(rectangleWalls()),
+      walls: rectangleWalls(),
+      catalog: DEFAULT_PANEL_CATALOG,
+      rules: DEFAULT_ACCESSORY_RULES,
+      availablePanelCountsByPour: { "pour-1": {} },
+    });
+
+    expect(cornerUnits(result.cornerPanels)).toBe(4);
+    expect(result.cornerPanels).toHaveLength(8);
+    expect(
+      result.cornerPanels.every((panel) => panel.flags.includes("inventory-shortage"))
+    ).toBe(true);
+    expect(new Set(result.cornerPanels.map((panel) => panel.groupId)).size).toBe(4);
+  });
 });
 
 describe("placeCornerPanels — straight joins are not corners", () => {

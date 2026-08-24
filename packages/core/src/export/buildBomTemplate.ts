@@ -13,6 +13,8 @@ export interface BomHeader {
 export interface BomRow {
   /** exact Hebrew product label — this is the key Priority ingests */
   label: string;
+  /** available units imported from the customer's stock sheet */
+  inventoryQty: number;
   /** m² per unit; null for accessory rows, which the customer leaves blank */
   sqmPerUnit: number | null;
   /** units to rent/buy: the MAX across pours, not the sum (panels move between pours) */
@@ -41,10 +43,13 @@ export interface BuildBomTemplateInput {
   pourNames: string[];
   panels: CountByPour<PanelCount>;
   accessories: CountByPour<AccessoryCount>;
+  /** exact BOM label → available units; missing/blank is zero */
+  inventory?: Record<string, number>;
 }
 
 const TABLE_HEADERS = [
   "תאור מוצר",
+  "מלאי ",
   "כמות דרושה לפרוייקט",
   "מר לתבנית",
   'סה"כ מר ',
@@ -68,6 +73,7 @@ const TABLE_HEADERS = [
  */
 export function buildBomTemplate(input: BuildBomTemplateInput): BomTemplate {
   const { catalog, pourIds, pourNames, panels, accessories } = input;
+  const inventoryOf = (label: string) => nonNegativeInteger(input.inventory?.[label]);
   const panelByBomLabel = new Map(catalog.panels.map((p) => [p.bomLabel, p]));
 
   const panelRow = (label: string, fallbackSqm: number): BomRow => {
@@ -77,6 +83,7 @@ export function buildBomTemplate(input: BuildBomTemplateInput): BomTemplate {
     const requiredQty = maxOf(perPour);
     return {
       label,
+      inventoryQty: inventoryOf(label),
       sqmPerUnit,
       requiredQty,
       totalSqm: round2(requiredQty * sqmPerUnit),
@@ -92,6 +99,7 @@ export function buildBomTemplate(input: BuildBomTemplateInput): BomTemplate {
     });
     return {
       label,
+      inventoryQty: inventoryOf(label),
       sqmPerUnit: null,
       requiredQty: maxOf(perPour),
       totalSqm: null,
@@ -102,6 +110,7 @@ export function buildBomTemplate(input: BuildBomTemplateInput): BomTemplate {
 
   const sectionRow = (label: string): BomRow => ({
     label,
+    inventoryQty: 0,
     sqmPerUnit: null,
     requiredQty: 0,
     totalSqm: null,
@@ -149,7 +158,9 @@ export function toGrid(template: BomTemplate): (string | number | null)[][] {
   const labelled = (label: string, value: string | number): (string | number | null)[] => {
     const row = blank();
     row[0] = label;
-    row[1] = value;
+    // Column B is inventory in the product table, so header values stay in C
+    // exactly like the customer's input workbook.
+    row[2] = value;
     return row;
   };
 
@@ -165,7 +176,14 @@ export function toGrid(template: BomTemplate): (string | number | null)[][] {
   ];
 
   for (const row of template.rows) {
-    grid.push([row.label, row.requiredQty, row.sqmPerUnit, row.totalSqm, ...row.perPour]);
+    grid.push([
+      row.label,
+      row.inventoryQty,
+      row.requiredQty,
+      row.sqmPerUnit,
+      row.totalSqm,
+      ...row.perPour,
+    ]);
   }
 
   return grid;
@@ -188,4 +206,8 @@ function maxOf(values: number[]): number {
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function nonNegativeInteger(value: number | undefined): number {
+  return Number.isFinite(value) && value! > 0 ? Math.floor(value!) : 0;
 }

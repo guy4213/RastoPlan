@@ -20,8 +20,13 @@ import { placeCornerPanels } from "./placeCornerPanels.js";
  * 5: corner-lap centimetres moved out of tileable run lengths and into the
  *    canvas-only drawing copies. Version 4 can contain artificial 8cm timber
  *    fillers and wrong accessory counts, so every such layout is recomputed.
+ * 6: imported finite inventory now constrains corner and straight-panel
+ *    selection per pour. Version 5 layouts can contain panels unavailable in
+ *    the project's saved inventory.
+ * 7: partial inventory is placed unit-by-unit; only missing units are flagged
+ *    instead of replacing an otherwise usable wall run with one red block.
  */
-export const ENGINE_VERSION = 5;
+export const ENGINE_VERSION = 7;
 
 export interface TileProjectResult {
   placements: Placement[];
@@ -48,11 +53,18 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
   const { walls, catalog, rules } = project;
 
   const resolution = resolveWalls(walls, options);
-  const corners = placeCornerPanels({ resolution, walls, catalog, rules });
+  const availablePanelCountsByPour = inventoryLedger(project);
+  const corners = placeCornerPanels({
+    resolution,
+    walls,
+    catalog,
+    rules,
+    availablePanelCountsByPour,
+  });
 
   const edgeById = new Map(corners.edges.map((e) => [e.id, e]));
   const placements: Placement[] = [];
-  const diagnostics = [...resolution.diagnostics];
+  const diagnostics = [...resolution.diagnostics, ...corners.diagnostics];
 
   for (const resolvedWall of resolution.resolvedWalls) {
     const edge = edgeById.get(`edge:${resolvedWall.id}`);
@@ -61,8 +73,10 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
 
     // Each face on its own run — see tileWall. The outer ring of a room carries
     // more panels than the inner ring, which is what the customer's plans show.
-    const faces = resolvedWall.faces.map((face) =>
-      tileWall(
+    const faces: Placement[][] = [];
+    for (const face of resolvedWall.faces) {
+      const availability = availablePanelCountsByPour?.[resolvedWall.pourId];
+      const tiled = tileWall(
         edge,
         {
           wallId: resolvedWall.id,
@@ -73,9 +87,24 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
           startOffset: runs[face.id].startOffset,
         },
         catalog,
-        rules
-      )
-    );
+        rules,
+        availability
+      );
+      consumeStraightPanels(tiled, availability);
+      const missing = missingPanelCounts(tiled);
+      if (Object.keys(missing).length > 0) {
+        diagnostics.push({
+          code: "inventory-straight-panel-shortage",
+          severity: "error",
+          message: `חסרים במלאי למקטע זה: ${Object.entries(missing)
+            .map(([type, count]) => `${type} × ${count}`)
+            .join(", ")}`,
+          wallIds: [resolvedWall.id],
+          nodeIds: [edge.nodeA, edge.nodeB],
+        });
+      }
+      faces.push(tiled);
+    }
 
     placements.push(
       ...corners.cornerPanels.filter((p) => p.edgeId === edge.id),
@@ -102,6 +131,48 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
   };
 
   return { placements, layout };
+}
+
+/** One independent stock ledger per pour: the same equipment is reused later. */
+function inventoryLedger(
+  project: Project
+): Record<string, Record<string, number>> | undefined {
+  if (!project.inventory) return undefined;
+  const baseline = Object.fromEntries(
+    project.catalog.panels.map((panel) => [
+      panel.type,
+      Math.max(0, Math.floor(project.inventory?.[panel.bomLabel] ?? 0)),
+    ])
+  );
+  return Object.fromEntries(project.pours.map((pour) => [pour.id, { ...baseline }]));
+}
+
+function consumeStraightPanels(
+  placements: Placement[],
+  availability: Record<string, number> | undefined
+): void {
+  if (!availability) return;
+  for (const placement of placements) {
+    if (
+      placement.kind !== "panel" ||
+      !placement.panelType ||
+      placement.flags.includes("inventory-shortage")
+    )
+      continue;
+    availability[placement.panelType] = Math.max(
+      0,
+      (availability[placement.panelType] ?? 0) - 1
+    );
+  }
+}
+
+function missingPanelCounts(placements: Placement[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const placement of placements) {
+    if (!placement.flags.includes("inventory-shortage") || !placement.panelType) continue;
+    counts[placement.panelType] = (counts[placement.panelType] ?? 0) + 1;
+  }
+  return counts;
 }
 
 /** Back-compat shim for callers that only want the placements. */

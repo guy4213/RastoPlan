@@ -90,4 +90,70 @@ describe("selectPanels", () => {
     expect(widthsOf(byGapFirst.panels)).toEqual([75, 75, 60, 60]);
     expect(byGapFirst.gap).toBe(0);
   });
+
+  it("uses an alternate combination when the preferred panel stock is limited", () => {
+    const result = selectPanels(150, sparseCatalog(), DEFAULT_ACCESSORY_RULES, {
+      R75: 1,
+      R50: 3,
+    });
+
+    expect(result.flags).toEqual([]);
+    expect(widthsOf(result.panels)).toEqual([50, 50, 50]);
+  });
+
+  it("keeps stocked units and reports only the exact missing remainder", () => {
+    const result = selectPanels(300, sparseCatalog(), DEFAULT_ACCESSORY_RULES, {
+      R75: 3,
+    });
+
+    expect(widthsOf(result.panels)).toEqual([75, 75, 75, 75]);
+    expect(result.flags).toEqual([]);
+    expect(result.missingPanelsByType).toEqual({ R75: 1 });
+  });
+
+  it("uses five stocked R75 units and marks only the remaining three as missing", () => {
+    const result = selectPanels(600, sparseCatalog(), DEFAULT_ACCESSORY_RULES, {
+      R75: 5,
+    });
+
+    expect(widthsOf(result.panels)).toEqual(Array.from({ length: 8 }, () => 75));
+    expect(result.missingPanelsByType).toEqual({ R75: 3 });
+  });
+
+  it("lets imported inventory override stale false catalog flags", () => {
+    const staleCatalog: PanelCatalog = {
+      panels: sparseCatalog().panels.map((panel) => ({ ...panel, inStock: false })),
+    };
+    const result = selectPanels(600, staleCatalog, DEFAULT_ACCESSORY_RULES, { R75: 5 });
+
+    expect(widthsOf(result.panels)).toEqual(Array.from({ length: 8 }, () => 75));
+    expect(result.missingPanelsByType).toEqual({ R75: 3 });
+  });
+
+  it("customer case: places 38 stocked R75 units and reports only two missing", () => {
+    const staleCatalog: PanelCatalog = {
+      panels: sparseCatalog().panels.map((panel) => ({ ...panel, inStock: false })),
+    };
+    const result = selectPanels(3000, staleCatalog, DEFAULT_ACCESSORY_RULES, { R75: 38 });
+
+    expect(result.panels.filter((panel) => panel.type === "R75")).toHaveLength(40);
+    expect(result.missingPanelsByType).toEqual({ R75: 2 });
+  });
+
+  it("keeps finite-stock selection fast on long walls", () => {
+    const availability = Object.fromEntries(
+      DEFAULT_PANEL_CATALOG.panels.map((panel) => [panel.type, 100])
+    );
+    const start = Date.now();
+    const result = selectPanels(
+      1275,
+      DEFAULT_PANEL_CATALOG,
+      DEFAULT_ACCESSORY_RULES,
+      availability
+    );
+
+    expect(result.flags).toEqual([]);
+    expect(result.panels.reduce((sum, panel) => sum + panel.width, 0)).toBe(1275);
+    expect(Date.now() - start).toBeLessThan(500);
+  });
 });

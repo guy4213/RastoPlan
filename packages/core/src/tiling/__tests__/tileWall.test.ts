@@ -81,4 +81,23 @@ describe("tileWall", () => {
     expect(placements[0]?.flags).toEqual(["gap-out-of-range"]);
     expect(placements[0]?.width).toBe(42);
   });
+
+  it("renders stocked panels normally and flags only each missing unit", () => {
+    const placements = tileWall(
+      edge(600),
+      target(600),
+      sparseCatalog(),
+      DEFAULT_ACCESSORY_RULES,
+      { R75: 5 }
+    );
+
+    expect(placements).toHaveLength(8);
+    expect(placements.every((placement) => placement.panelType === "R75")).toBe(true);
+    expect(
+      placements.filter((placement) => placement.flags.includes("inventory-shortage"))
+    ).toHaveLength(3);
+    expect(
+      placements.filter((placement) => !placement.flags.includes("inventory-shortage"))
+    ).toHaveLength(5);
+  });
 });

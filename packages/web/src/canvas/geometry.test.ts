@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { Wall } from "@rastoplan/core";
 import {
   applyAxisLock,
-  bandFromCorners,
   labelSideByWallId,
   panelOverlapRects,
   thicknessFromPointer,

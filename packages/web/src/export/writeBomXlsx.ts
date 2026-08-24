@@ -13,7 +13,8 @@ import { toGrid, type BomTemplate } from "@rastoplan/core";
  * the app and nothing needs it until someone actually exports.
  */
 export async function bomWorkbook(template: BomTemplate): Promise<ExcelJS.Workbook> {
-  const { Workbook } = await import("exceljs");
+  const excelJs = await import("exceljs");
+  const Workbook = excelJs.Workbook ?? excelJs.default.Workbook;
   const workbook = new Workbook();
   const sheet = workbook.addWorksheet("גיליון1", { views: [{ rightToLeft: true }] });
 
@@ -29,7 +30,7 @@ export async function bomWorkbook(template: BomTemplate): Promise<ExcelJS.Workbo
   sheet.getRow(COLUMN_HEADER_ROW).font = { bold: true };
 
   sheet.getColumn(1).width = 32;
-  for (let i = 2; i <= 4 + template.pourNames.length; i++) {
+  for (let i = 2; i <= 5 + template.pourNames.length; i++) {
     sheet.getColumn(i).width = 16;
   }
 
