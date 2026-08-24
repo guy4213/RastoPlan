@@ -100,6 +100,31 @@ export function doubleContourRoomWalls(): Wall[] {
 }
 
 /**
+ * The same 400x300 room traced as two contours, at any thickness. The whole
+ * point of the wall-thickness work is that nothing about the result should
+ * depend on how close the two contours are, so every thickness case is one
+ * call to this rather than a hand-written fixture per width.
+ */
+export function doubleContourRoomWallsAt(thicknessCm: number): Wall[] {
+  const t = thicknessCm;
+  return [
+    makeWall("in-bottom", { x: 0, y: 0 }, { x: 400, y: 0 }, t),
+    makeWall("in-right", { x: 400, y: 0 }, { x: 400, y: 300 }, t),
+    makeWall("in-top", { x: 400, y: 300 }, { x: 0, y: 300 }, t),
+    makeWall("in-left", { x: 0, y: 300 }, { x: 0, y: 0 }, t),
+    makeWall("out-bottom", { x: -t, y: -t }, { x: 400 + t, y: -t }, t),
+    makeWall("out-right", { x: 400 + t, y: -t }, { x: 400 + t, y: 300 + t }, t),
+    makeWall("out-top", { x: 400 + t, y: 300 + t }, { x: -t, y: 300 + t }, t),
+    makeWall("out-left", { x: -t, y: 300 + t }, { x: -t, y: -t }, t),
+  ];
+}
+
+/** rectangleWalls() at an arbitrary thickness, the single-contour counterpart. */
+export function rectangleWallsAt(thicknessCm: number): Wall[] {
+  return rectangleWalls().map((w) => ({ ...w, thickness: thicknessCm }));
+}
+
+/**
  * The same drawing with two of the eight walls dragged the other way. The
  * resolved outward direction must come out identical — this is the regression
  * fixture for the outward sign having been read off each wall's own A→B drag
@@ -220,5 +245,52 @@ export function nestedRoomsWalls(): Wall[] {
   return [
     ...ring({ x: 0, y: 0 }, { x: 1000, y: 800 }, "hall"),
     ...ring({ x: 350, y: 300 }, { x: 650, y: 500 }, "room"),
+  ];
+}
+
+/**
+ * TWO POURS. Two separate rooms, each traced the way the customer draws — an
+ * inner contour and an outer one — and each assigned to its own pour, at a
+ * DIFFERENT wall thickness. The second uses 10cm, the width that used to fall
+ * under the old plausible-thickness floor and come back doubled.
+ *
+ * Placed far enough apart that neither plan's geometry can reach the other, so
+ * anything that leaks between the two pours is a bookkeeping bug rather than a
+ * consequence of the drawing.
+ */
+export function twoPourDoubleContourWalls(): Wall[] {
+  const ring = (
+    origin: Point,
+    size: Point,
+    thickness: number,
+    pourId: string,
+    prefix: string
+  ): Wall[] => {
+    const t = thickness;
+    const corners = (inset: number): Point[] => [
+      { x: origin.x - inset, y: origin.y - inset },
+      { x: origin.x + size.x + inset, y: origin.y - inset },
+      { x: origin.x + size.x + inset, y: origin.y + size.y + inset },
+      { x: origin.x - inset, y: origin.y + size.y + inset },
+    ];
+
+    return [
+      ...contour(corners(0), `${prefix}-in`),
+      ...contour(corners(t), `${prefix}-out`),
+    ];
+
+    function contour(points: Point[], name: string): Wall[] {
+      return points.map((p, i) => ({
+        id: `${name}-${i}`,
+        pourId,
+        innerLine: [p, points[(i + 1) % points.length]!] as [Point, Point],
+        thickness: t,
+      }));
+    }
+  };
+
+  return [
+    ...ring({ x: 0, y: 0 }, { x: 400, y: 300 }, 20, "pour-1", "a"),
+    ...ring({ x: 1000, y: 0 }, { x: 300, y: 200 }, 10, "pour-2", "b"),
   ];
 }

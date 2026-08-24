@@ -29,6 +29,17 @@ function pointsAwayFromRoom(wall: ResolvedWall): boolean {
   return probe.x < 0 || probe.x > 400 || probe.y < 0 || probe.y > 300;
 }
 
+/** The perpendicular distance actually between a resolved wall's two faces. */
+function faceSeparationOf(wall: ResolvedWall): number {
+  const [a, b] = wall.faces[0].line;
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  const mid = {
+    x: (wall.faces[1].line[0].x + wall.faces[1].line[1].x) / 2,
+    y: (wall.faces[1].line[0].y + wall.faces[1].line[1].y) / 2,
+  };
+  return Math.abs((b.x - a.x) * (mid.y - a.y) - (b.y - a.y) * (mid.x - a.x)) / length;
+}
+
 describe("resolveWalls on the customer's two-contour drawing", () => {
   it("keeps only the inner contour and consumes the outer one", () => {
     const result = resolveWalls(doubleContourRoomWalls());
@@ -47,16 +58,32 @@ describe("resolveWalls on the customer's two-contour drawing", () => {
     ]);
   });
 
-  it("takes the thickness the engineer typed, not the gap between the drawn contours", () => {
-    // The second contour says which line is the far face so it isn't formed
-    // twice; it does not overrule the wall thickness, which is the engineer's
-    // to set. A plan drawn out of scale must not silently become a 2m wall.
+  it("takes the thickness from the gap between the drawn contours", () => {
+    // The wall thickness IS the distance between its two faces, and on a
+    // two-contour plan the user has already drawn that distance. Preferring a
+    // typed number here is what let `thickness` and `faceBOffsetCm` disagree:
+    // the BOM sized rods for one wall while the canvas drew another.
     const walls = doubleContourRoomWalls().map((w) => ({ ...w, thickness: 25 }));
     const result = resolveWalls(walls);
 
+    expect(result.resolvedWalls).toHaveLength(4);
     for (const wall of result.resolvedWalls) {
-      expect(wall.thicknessSource).toBe("declared");
-      expect(wall.thickness).toBe(25);
+      expect(wall.thicknessSource).toBe("measured");
+      expect(wall.thickness).toBe(20);
+    }
+  });
+
+  it("keeps thickness, faceBOffsetCm and the drawn geometry in step", () => {
+    // The three used to be able to drift apart. Whatever the user typed, the
+    // number the BOM reads and the offset the canvas draws must both be the
+    // distance actually between the two faces.
+    for (const declared of [10, 20, 25, 60]) {
+      const walls = doubleContourRoomWalls().map((w) => ({ ...w, thickness: declared }));
+
+      for (const wall of resolveWalls(walls).resolvedWalls) {
+        expect(wall.faceBOffsetCm, `declared=${declared}`).toBe(wall.thickness);
+        expect(faceSeparationOf(wall)).toBeCloseTo(wall.thickness, 1);
+      }
     }
   });
 

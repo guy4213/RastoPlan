@@ -8,7 +8,13 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "types": ["vite/client"],
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      // vitest is hoisted into the core package rather than installed here, so
+      // point at it explicitly. Without this the reducer tests are the only
+      // source files in the repo that go unchecked.
+      "vitest": ["../core/node_modules/vitest"]
+    }
   },
   "include": ["src"]
 }

@@ -113,7 +113,12 @@ describe("tileProject — a wall drawn as two collinear segments", () => {
     expect(countCornerUnits(whole)).toBe(4);
 
     const rules = DEFAULT_ACCESSORY_RULES;
-    const splitCounts = countAccessories(split, layoutEdges(collinearSplitWallWalls()), collinearSplitWallWalls(), rules);
+    const splitCounts = countAccessories(
+      split,
+      layoutEdges(collinearSplitWallWalls()),
+      collinearSplitWallWalls(),
+      rules
+    );
     expect(splitCounts.cornerClamps).toBe(12);
   });
 });
@@ -174,7 +179,9 @@ describe("tileProject — each face covers its own run", () => {
         run[run.length - 1]!.offsetAlongEdge + run[run.length - 1]!.width - run[0]!.offsetAlongEdge;
 
       // Inner: L - 30 - 30, the two corner-panel legs.
-      // Outer: L + 20 + 20, wrapping to the outer corner point at each end.
+      // Outer: L + 20 + 20 wrapping to each outer corner, then the joint at
+      // both ends — a panel thickness on the flatter walls, that less the
+      // clearance on the steeper ones. 60 + 40 + 2x10 or 2x8.
       expect(span(outer)).toBe(span(inner) + 100);
       expect(outer[0]!.offsetAlongEdge).toBe(-20);
     }
@@ -190,10 +197,42 @@ describe("tileProject — each face covers its own run", () => {
 
   it("leaves no untiled stretch on a room mixing 20cm and 30cm walls", () => {
     const walls: Wall[] = [
-      { id: "bottom", pourId: "pour-1", innerLine: [{ x: 0, y: 0 }, { x: 300, y: 0 }], thickness: 20 },
-      { id: "right", pourId: "pour-1", innerLine: [{ x: 300, y: 0 }, { x: 300, y: 300 }], thickness: 30 },
-      { id: "top", pourId: "pour-1", innerLine: [{ x: 300, y: 300 }, { x: 0, y: 300 }], thickness: 20 },
-      { id: "left", pourId: "pour-1", innerLine: [{ x: 0, y: 300 }, { x: 0, y: 0 }], thickness: 30 },
+      {
+        id: "bottom",
+        pourId: "pour-1",
+        innerLine: [
+          { x: 0, y: 0 },
+          { x: 300, y: 0 },
+        ],
+        thickness: 20,
+      },
+      {
+        id: "right",
+        pourId: "pour-1",
+        innerLine: [
+          { x: 300, y: 0 },
+          { x: 300, y: 300 },
+        ],
+        thickness: 30,
+      },
+      {
+        id: "top",
+        pourId: "pour-1",
+        innerLine: [
+          { x: 300, y: 300 },
+          { x: 0, y: 300 },
+        ],
+        thickness: 20,
+      },
+      {
+        id: "left",
+        pourId: "pour-1",
+        innerLine: [
+          { x: 0, y: 300 },
+          { x: 0, y: 0 },
+        ],
+        thickness: 30,
+      },
     ];
     const placements = tile(walls);
 
@@ -220,7 +259,7 @@ describe("tileProject — corners", () => {
     expect(cornerLegs.every((p) => p.width === 30)).toBe(true);
   });
 
-  it("meets the two walls' outer faces exactly at the outer corner point", () => {
+  it("stores the outer runs at the face intersection for visual lapping", () => {
     const { layout } = tileProject(projectOf(rectangleWalls()));
     const placements = tile(rectangleWalls());
     const outerOf = (wallId: string) =>
@@ -228,8 +267,9 @@ describe("tileProject — corners", () => {
         .filter((p) => p.edgeId === `edge:${wallId}` && p.side === "faceB")
         .sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
 
-    // `bottom` runs 0..400 and `right` starts where it ends, so bottom's outer
-    // face must finish 20 past 400 and right's must begin 20 before 0.
+    // `bottom` is the flatter wall, so it carries a full panel thickness past
+    // right's outer face (400+20+10) and covers the corner square outright.
+    // `right` rides up over it, stopping the clearance short (-20-10+2).
     const bottom = outerOf("bottom");
     const last = bottom[bottom.length - 1]!;
     expect(last.offsetAlongEdge + last.width).toBe(420);
@@ -274,11 +314,7 @@ describe("tileProject — full pipeline coherence", () => {
 
     expect(layout.resolvedWalls).toHaveLength(4);
     expect(layout.corners).toHaveLength(4);
-    expect(layout.regions.map((r) => r.kind).sort()).toEqual([
-      "outside",
-      "room",
-      "wall-material",
-    ]);
+    expect(layout.regions.map((r) => r.kind).sort()).toEqual(["outside", "room", "wall-material"]);
     expect(layout.engineVersion).toBeGreaterThanOrEqual(2);
   });
 });
@@ -288,14 +324,16 @@ describe("tileProject — variable wall thickness", () => {
     const thin: Wall = {
       id: "thin",
       pourId: "pour-1",
-      innerLine: [{ x: 0, y: 0 }, { x: 200, y: 0 }],
+      innerLine: [
+        { x: 0, y: 0 },
+        { x: 200, y: 0 },
+      ],
       thickness: 15,
     };
     const thick: Wall = { ...thin, id: "thick", thickness: 30 };
     expect(deriveOuterLine(thin)[0].y).toBe(-15);
     expect(deriveOuterLine(thick)[0].y).toBe(-30);
   });
-
 });
 
 function layoutEdges(walls: Wall[]) {

@@ -35,6 +35,15 @@ function singlePourTemplate() {
   return buildBomTemplate(inputFor(rectangleWalls(), ["pour-1"], ["יציקה 1"]));
 }
 
+/** On-site timber pieces the single-pour room produces — see the clamp test. */
+function singlePourTimberPieces(): number {
+  return countPanelsByPour(
+    tileProject(projectOf(rectangleWalls(), [{ id: "pour-1", name: "יציקה 1", color: "#000", order: 0 }]))
+      .placements,
+    rectangleWalls()
+  ).total.timberPieces;
+}
+
 describe("buildBomTemplate — product rows", () => {
   it("lists every product in the customer's exact order and wording", () => {
     const labels = singlePourTemplate().rows.map((r) => r.label);
@@ -125,7 +134,12 @@ describe("buildBomTemplate — quantities", () => {
     const straightUnits = template.rows
       .filter((r) => r.label.startsWith("פנאל ") && !r.label.includes("/30/300"))
       .reduce((sum, r) => sum + r.requiredQty, 0);
-    expect(rows.get("קלמרה רגילה לתבניות GT")?.requiredQty).toBe(straightUnits * 3);
+    // The timber term is deliberate — see the note in countAccessories.test.ts
+    // and docs/open-questions.md: the engine clamps timber fillers, the
+    // customer's sheet counts only catalogue panels.
+    expect(rows.get("קלמרה רגילה לתבניות GT")?.requiredQty).toBe(
+      (straightUnits + singlePourTimberPieces()) * 3
+    );
   });
 
   it("walkway and strut come as an equal pair, as in every sheet we have", () => {

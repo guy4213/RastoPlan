@@ -54,6 +54,8 @@ export interface Pour {
   color: string;
   /** display order among a project's pours */
   order: number;
+  /** @deprecated Kept only when loading older projects; new walls do not use it. */
+  defaultThicknessCm?: number;
 }
 
 /** A wall segment. Only the inner face is user input; the outer face is derived. */
@@ -63,8 +65,28 @@ export interface Wall {
   pourId: string;
   /** the inner face centerline — this is the master geometry */
   innerLine: [Point, Point];
-  /** wall thickness in cm, manually entered by the user */
+  /**
+   * Distance in cm between this wall's two faces. On a wall drawn as a single
+   * line the user types it and the far face is derived from it; on a wall
+   * traced as two contours the engine measures it and writes it back here.
+   */
   thickness: number;
+  /**
+   * False only for a newly drawn single line whose thickness has not been
+   * entered yet. Absent means true for backwards compatibility. The numeric
+   * thickness remains present as an internal engine placeholder, but must not
+   * be displayed or computed until this becomes true or a contour pair is
+   * measured.
+   */
+  thicknessSet?: boolean;
+  /**
+   * The other drawn contour of this same physical wall, on a two-contour plan.
+   * Written by the engine on compute, on BOTH walls of the pair, so the pairing
+   * survives `layout` being cleared. Must be dropped from both walls the moment
+   * either one's geometry changes: a stale link would move a wall that is no
+   * longer the partner.
+   */
+  pairedWallId?: string;
   // outerLine is derived: innerLine offset outward by `thickness`, not stored.
 }
 
@@ -309,6 +331,13 @@ export interface AccessoryRules {
   outerCornerProtrusionMinCm: number;
   /** neighbour thickness the standard overlap is quoted for, default 20 */
   outerCornerProtrusionReferenceThicknessCm: number;
+  /**
+   * Clearance in cm the LAPPED outer panel stops short of the lapping one at a
+   * convex corner, default 2. With outerCornerProtrusionCm this is the whole
+   * outer-corner joint: one panel runs past, the other stops just before it,
+   * and exactly one of them covers the corner square itself.
+   */
+  outerCornerLapGapCm: number;
   /** tie-break order for the tiling engine, default ['leading', 'min-panels', 'min-gap'] */
   tilingPriority: TilingPriority[];
 }

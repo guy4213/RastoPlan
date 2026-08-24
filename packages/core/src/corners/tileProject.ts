@@ -5,7 +5,23 @@ import { tileWall } from "../tiling/tileWall.js";
 import { placeCornerPanels } from "./placeCornerPanels.js";
 
 /** Bump when a change makes previously saved layouts wrong rather than merely stale. */
-export const ENGINE_VERSION = 2;
+/**
+ * Stamped into every layout so a stored one can be told apart from what the
+ * current engine would produce. Bump it whenever a change makes old layouts
+ * wrong rather than merely different — the web app drops mismatched layouts on
+ * load and asks for a recompute.
+ *
+ * 3: thin walls pair (the 15cm floor became technical), thickness is measured
+ *    off the drawing, and outer corners are lapped joints instead of butted.
+ * 4: the lap direction was finalised: horizontal panels carry the full 10cm;
+ *    vertical panels are inset 2cm at the top and bottom. Version 3 existed
+ *    while that corner rule was still being tuned, so its stored placements
+ *    must not survive and keep showing a square 10x10 overlap.
+ * 5: corner-lap centimetres moved out of tileable run lengths and into the
+ *    canvas-only drawing copies. Version 4 can contain artificial 8cm timber
+ *    fillers and wrong accessory counts, so every such layout is recomputed.
+ */
+export const ENGINE_VERSION = 5;
 
 export interface TileProjectResult {
   placements: Placement[];
@@ -75,9 +91,11 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
     // another one would otherwise be counted a second time for struts.
     edges: corners.edges.filter((e) => resolution.wallByEdgeId.has(e.id)),
     resolvedWalls: resolution.resolvedWalls,
-    regions: resolution.regions.map(
-      (r): RegionSummary => ({ id: r.id, kind: r.kind, area: r.area })
-    ),
+    regions: resolution.regions.map((r): RegionSummary => ({
+      id: r.id,
+      kind: r.kind,
+      area: r.area,
+    })),
     corners: resolution.corners,
     diagnostics,
     engineVersion: ENGINE_VERSION,
@@ -87,9 +105,6 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
 }
 
 /** Back-compat shim for callers that only want the placements. */
-export function tileProjectPlacements(
-  project: Project,
-  options: ResolveOptions = {}
-): Placement[] {
+export function tileProjectPlacements(project: Project, options: ResolveOptions = {}): Placement[] {
   return tileProject(project, options).placements;
 }

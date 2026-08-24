@@ -27,10 +27,10 @@ export interface PlaceCornerPanelsResult {
    */
   cornerPanels: Placement[];
   /**
-   * Always empty. The outer corner used to get an overlap strip on BOTH
-   * meeting walls, because nothing decided which panel wraps — that showed up
-   * on the drawing as two stray "+10" blocks in every corner. Two straight
-   * panels now simply run to the outer corner point and meet there.
+   * Always empty. The outer corner used to get a separate overlap strip on
+   * BOTH meeting walls, because nothing decided which panel wraps — that
+   * showed up as two stray "+10" blocks. The overlap is now part of the real
+   * straight runs: one carries across the corner and the other rides over it.
    */
   protrusions: Placement[];
   /** Edges with clearLength recomputed for the corner panels actually placed. */
@@ -38,7 +38,8 @@ export interface PlaceCornerPanelsResult {
   /**
    * Where each face's straight run starts and how long it is, per edge. The two
    * faces differ: the outer one wraps past every convex corner by the
-   * neighbour's thickness, so it carries more panels than the inner one.
+   * neighbour's thickness plus its lapped joint, so it carries more panels
+   * than the inner one.
    */
   runs: Map<string, Record<PlacementSide, FaceRun>>;
 }
@@ -55,7 +56,7 @@ export interface PlaceCornerPanelsResult {
  * the tileable straight run, and corner-adjacent placements sit outside it.
  */
 export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPanelsResult {
-  const { resolution, walls, catalog } = input;
+  const { resolution, walls, catalog, rules } = input;
   const nodeById = new Map(resolution.nodes.map((n) => [n.id, n]));
   const wallById = new Map(walls.map((w) => [w.id, w]));
 
@@ -113,6 +114,7 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
         cornersAtA: endCorners.A,
         cornersAtB: endCorners.B,
         cornerPanelWidth,
+        rules,
         edges: resolution.edges,
         nodeById,
         wallById,

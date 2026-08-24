@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { Point } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
+import { MAX_WALL_THICKNESS_CM, MIN_WALL_THICKNESS_CM } from "../state/project.js";
 import { formatLength } from "../canvas/geometry.js";
+import { displayedWallThickness } from "../canvas/resolvedWallFrame.js";
 
 /**
  * Rotate a point around origin by the given angle in degrees. Used to
@@ -17,6 +19,11 @@ export function WallPanel() {
   const { state, dispatch } = useProject();
   const wall = state.project.walls.find((w) => w.id === state.ui.selectedWallId) ?? null;
   const units = state.ui.units;
+  const thicknessIsSet = wall ? wall.thicknessSet !== false : false;
+  const visibleThickness = wall
+    ? displayedWallThickness(wall, state.project.layout, state.project.walls)
+    : 0;
+  const thicknessForField = Math.round(visibleThickness * 10) / 10;
 
   // Numeric length draft — buffered so intermediate values (e.g. an
   // in-progress "40" typed toward "400") don't rewrite the wall on every
@@ -30,12 +37,42 @@ export function WallPanel() {
     setLengthDraft(String(currentLength));
   }, [currentLength, wall?.id]);
 
+  // Thickness gets the same buffering as length, and for the same reason: an
+  // unbuffered field dispatched on every keystroke, so clearing it to retype
+  // sent thickness 0 and each digit threw away the whole computed layout.
+  const [thicknessDraft, setThicknessDraft] = useState<string>(
+    wall && thicknessIsSet ? String(thicknessForField) : ""
+  );
+
+  useEffect(() => {
+    setThicknessDraft(wall && thicknessIsSet ? String(thicknessForField) : "");
+  }, [thicknessForField, thicknessIsSet, wall?.id]);
+
   const [nextLength, setNextLength] = useState<string>("300");
   const [nextAngle, setNextAngle] = useState<string>("0");
 
   if (!wall) return null;
 
   const [a, b] = wall.innerLine;
+
+  // On a two-contour plan the visible thickness is the live gap the user drew,
+  // even before compute. Once the pair closes, the reducer stores this same
+  // value on both source lines so display and persistence stay identical.
+  const partner = wall.pairedWallId
+    ? state.project.walls.find((w) => w.id === wall.pairedWallId)
+    : undefined;
+  const isPaired = !!wall.pairedWallId;
+  const partnerMissing = isPaired && !partner;
+
+  const commitThickness = () => {
+    const n = Number(thicknessDraft.replace(",", "."));
+    if (!Number.isFinite(n) || n < MIN_WALL_THICKNESS_CM || n > MAX_WALL_THICKNESS_CM) {
+      setThicknessDraft(String(thicknessForField));
+      return;
+    }
+    if (thicknessIsSet && Math.abs(n - visibleThickness) < 0.001) return;
+    dispatch({ type: "update-wall", wallId: wall.id, patch: { thickness: n } });
+  };
 
   const commitLength = () => {
     const n = Number(lengthDraft);
@@ -108,15 +145,31 @@ export function WallPanel() {
         <Row label='עובי (ס"מ)'>
           <input
             type="number"
-            min={5}
-            max={80}
-            value={wall.thickness}
-            onChange={(e) =>
-              dispatch({ type: "update-wall", wallId: wall.id, patch: { thickness: Number(e.target.value) } })
-            }
-            style={inputStyle}
+            min={MIN_WALL_THICKNESS_CM}
+            max={MAX_WALL_THICKNESS_CM}
+            step={0.1}
+            value={thicknessDraft}
+            disabled={partnerMissing}
+            onChange={(e) => setThicknessDraft(e.target.value)}
+            onBlur={commitThickness}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            style={partnerMissing ? { ...inputStyle, background: "#f1f5f9", color: "#94a3b8" } : inputStyle}
           />
         </Row>
+        <p style={{ margin: 0, fontSize: 11, color: partnerMissing ? "#b91c1c" : "#64748b", lineHeight: 1.4 }}>
+          {partnerMissing
+            ? "הקישור לקו השני אינו תקף — יש לחשב מחדש לפני שינוי העובי."
+            : !thicknessIsSet
+              ? "לא הוגדר עובי. אפשר להקליד כאן או ללחוץ על ‘הגדר עובי’ בקנבס."
+              : isPaired
+              ? "העובי נמדד חי בין שני הקווים, גם לפני חישוב. שינוי כאן יזיז את הקו השני ויסגור מחדש את הפינות."
+              : "העובי הוקלד. הפאה השנייה נגזרת ממנו. אפשר גם לגרור את הידית שעל קו המידה בקנבס."}
+        </p>
       </div>
       <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
         <button

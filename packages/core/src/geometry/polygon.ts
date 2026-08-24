@@ -155,6 +155,24 @@ export function pointAlong(line: [Point, Point], t: number): Point {
 }
 
 /**
+ * Where the two infinite lines cross, or null when they are parallel. Used to
+ * re-close a contour corner after one of its segments has been offset: the new
+ * corner is simply where the moved line now meets its neighbour.
+ */
+export function lineIntersection(
+  a: [Point, Point],
+  b: [Point, Point]
+): Point | null {
+  const da = subtract(a[1], a[0]);
+  const db = subtract(b[1], b[0]);
+  const denominator = cross2(da, db);
+  if (Math.abs(denominator) < EPSILON) return null;
+
+  const t = cross2(subtract(b[0], a[0]), db) / denominator;
+  return { x: a[0].x + da.x * t, y: a[0].y + da.y * t };
+}
+
+/**
  * Unit perpendicular to a→b, in the (dy, -dx) frame the whole codebase uses
  * for wall normals (web/src/canvas/geometry.ts:wallNormal, deriveOuterLine's
  * OuterSide). Keeping one convention is what makes outward signs comparable

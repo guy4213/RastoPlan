@@ -1,4 +1,12 @@
-import type { CornerAtNode, Edge, Node, PlacementSide, ResolvedWall, Wall } from "../types.js";
+import type {
+  AccessoryRules,
+  CornerAtNode,
+  Edge,
+  Node,
+  PlacementSide,
+  ResolvedWall,
+  Wall,
+} from "../types.js";
 import { otherWallThicknessAt } from "../geometry/neighborThickness.js";
 
 /**
@@ -20,6 +28,14 @@ export interface FaceRun {
   /** how far the face reaches past the drawn line at each end */
   extensionAtA: number;
   extensionAtB: number;
+  /**
+   * The outer-corner joint at each end: how far this face runs past its
+   * neighbour's outer face line so the two panels overlap there. Zero at a
+   * concave corner and on every room-facing face. Kept apart from the extension
+   * so the wrap stays pure geometry and the joint stays a rule.
+   */
+  lapAtA: number;
+  lapAtB: number;
 }
 
 export interface FaceRunInput {
@@ -31,6 +47,7 @@ export interface FaceRunInput {
   cornersAtA: CornerAtNode[];
   cornersAtB: CornerAtNode[];
   cornerPanelWidth: number;
+  rules: AccessoryRules;
   edges: Edge[];
   nodeById: Map<string, Node>;
   wallById: Map<string, Wall>;
@@ -53,6 +70,7 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
     cornersAtA,
     cornersAtB,
     cornerPanelWidth,
+    rules,
     edges,
     wallById,
   } = input;
@@ -65,8 +83,7 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
   const cornerA = cornerOn(cornersAtA);
   const cornerB = cornerOn(cornersAtB);
 
-  const neighbourAt = (nodeId: string) =>
-    otherWallThicknessAt(nodeId, edge, edges, wallById);
+  const neighbourAt = (nodeId: string) => otherWallThicknessAt(nodeId, edge, edges, wallById);
 
   // A face that borders a room stops at its corner panel's leg. A face that
   // borders no room gives up nothing: the outer corner is just two straight
@@ -79,11 +96,16 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
   // can read straight off the drawing. Only a derived face has to infer how far
   // it wraps past each corner from the neighbouring wall's thickness.
   const drawn = faceSpec?.sourceWallId && face !== "faceA" ? projectedExtent(input) : null;
-  const extensionAtA =
-    drawn?.startExtension ??
-    extensionFor(cornersAtA, faceSpec?.regionId, neighbourAt(edge.nodeA));
-  const extensionAtB =
-    drawn?.endExtension ?? extensionFor(cornersAtB, faceSpec?.regionId, neighbourAt(edge.nodeB));
+  const derivedA = extensionFor(cornersAtA, faceSpec?.regionId, neighbourAt(edge.nodeA));
+  const derivedB = extensionFor(cornersAtB, faceSpec?.regionId, neighbourAt(edge.nodeB));
+  const extensionAtA = drawn?.startExtension ?? derivedA.cm;
+  const extensionAtB = drawn?.endExtension ?? derivedB.cm;
+
+  // The lap applies even when the far contour was drawn. The drawing says where
+  // the concrete is; it says nothing about how two formwork panels are jointed,
+  // and a plan must not bill differently for being traced twice.
+  const lapAtA = derivedA.convex ? lapDelta(wallById.get(edge.wallId), rules) : 0;
+  const lapAtB = derivedB.convex ? lapDelta(wallById.get(edge.wallId), rules) : 0;
 
   // The corner panel's leg is part of the wall, not extra to it: it fills the
   // first 30cm, the straight run takes the middle, and the far leg fills the
@@ -98,9 +120,14 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
       consumedAtB,
       extensionAtA: 0,
       extensionAtB: 0,
+      lapAtA: 0,
+      lapAtB: 0,
     };
   }
 
+  // The lap is a drafting detail on the existing end panels, not extra
+  // tileable wall length. Adding it here changes panel selection and creates
+  // artificial timber fillers (and therefore wrong BOM/accessory counts).
   const start = -extensionAtA + consumedAtA;
   const end = geometricLength + extensionAtB - consumedAtB;
 
@@ -111,6 +138,8 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
     consumedAtB,
     extensionAtA,
     extensionAtB,
+    lapAtA,
+    lapAtB,
   };
 }
 
@@ -145,17 +174,49 @@ function extensionFor(
   corners: CornerAtNode[],
   regionId: string | undefined,
   neighbourThickness: number
-): number {
+): { cm: number; convex: boolean } {
   // The face's own region has no corner here (a T junction, a free end, or a
   // straight join), so the face simply ends level with the drawn line.
   const roomCorner = corners[0];
-  if (!roomCorner) return 0;
+  if (!roomCorner) return { cm: 0, convex: false };
 
   // Convex for the room on the far side means convex outward for this face.
   const convexForFarSide = corners.some((c) => c.regionId !== regionId && c.side === "outer");
   const concaveForFarSide = corners.some((c) => c.regionId !== regionId && c.side === "inner");
 
-  if (convexForFarSide) return neighbourThickness;
-  if (concaveForFarSide) return -neighbourThickness;
-  return roomCorner.side === "outer" ? neighbourThickness : -neighbourThickness;
+  if (convexForFarSide) return { cm: neighbourThickness, convex: true };
+  if (concaveForFarSide) return { cm: -neighbourThickness, convex: false };
+  return roomCorner.side === "outer"
+    ? { cm: neighbourThickness, convex: true }
+    : { cm: -neighbourThickness, convex: false };
+}
+
+/**
+ * How far an outer face runs PAST its neighbour's outer face line at a convex
+ * corner.
+ *
+ * Both walls run past — that is what closes the corner square, which is
+ * otherwise reached by neither panel and leaves a hole in the formwork. They
+ * run past by different amounts, and which gets which is decided by how the
+ * wall lies:
+ *
+ * - the flatter wall by a full panel thickness, so it carries right across the
+ *   panel it meets and covers the corner;
+ * - the steeper wall by a panel thickness LESS the clearance, so it rides up
+ *   over that panel and stops just short of its far edge, leaving the
+ *   clearance showing.
+ *
+ * Steep-over-flat rather than a rotation around the contour: the crew builds
+ * every corner the same way up, so all four corners of a room have to look
+ * alike. A rotation alternates them, and two of the four then come out mirrored
+ * from what is actually built.
+ */
+function lapDelta(wall: Wall | undefined, rules: AccessoryRules): number {
+  const panel = rules.outerCornerProtrusionCm ?? 0;
+  const clearance = rules.outerCornerLapGapCm ?? 0;
+  if (!wall) return panel;
+
+  const [a, b] = wall.innerLine;
+  const steep = Math.abs(b.y - a.y) > Math.abs(b.x - a.x);
+  return steep ? Math.max(0, panel - clearance) : panel;
 }

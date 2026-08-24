@@ -21,6 +21,7 @@ describe("DEFAULT_ACCESSORY_RULES", () => {
       outerCornerProtrusionCm: 10,
       outerCornerProtrusionMinCm: 5,
       outerCornerProtrusionReferenceThicknessCm: 20,
+      outerCornerLapGapCm: 2,
       tilingPriority: ["leading", "min-panels", "min-gap"],
     });
   });

@@ -4,6 +4,7 @@ import type {
   Edge,
   Node,
   OutwardSign,
+  Point,
   ResolvedWall,
   ResolvedWallFace,
   Wall,
@@ -13,14 +14,24 @@ import { classifyNodes } from "../geometry/classifyNodes.js";
 import { classifyCornerSides } from "../geometry/classifyCornerSides.js";
 import { buildPlanarFaces } from "../geometry/planarFaces.js";
 import type { PlanarFacesResult } from "../geometry/planarFaces.js";
-import { unitNormal } from "../geometry/polygon.js";
+import {
+  angleBetweenDeg,
+  closestPointOnLine,
+  perpendicularDistance,
+  projectedOverlap,
+  unitNormal,
+} from "../geometry/polygon.js";
 import { deriveOuterLine } from "../corners/deriveOuterLine.js";
-import { withDefaults } from "./constants.js";
+import {
+  CONTOUR_PARALLEL_TOLERANCE_DEG,
+  GEOMETRY_RESOLUTION_FLOOR_CM,
+  withDefaults,
+} from "./constants.js";
 import type { ResolveOptions } from "./constants.js";
 import { buildRegions, OUTSIDE_REGION_ID } from "./regions.js";
 import type { Region } from "./regions.js";
 import { pairFaces } from "./pairFaces.js";
-import type { FacePairing } from "./pairFaces.js";
+import type { FacePairing, PairNearMiss, PairRejectionReason } from "./pairFaces.js";
 
 export type { Diagnostic, OutwardSign, ResolvedWall, ResolvedWallFace };
 
@@ -51,6 +62,8 @@ export function resolveWalls(walls: Wall[], options: ResolveOptions = {}): WallR
   const resolved = withDefaults(options);
   const diagnostics: Diagnostic[] = [];
 
+  reportWallsBelowResolution(walls, diagnostics);
+
   const { nodes: rawNodes, edges } = buildGraph(walls);
   const typedNodes = classifyNodes(rawNodes, edges, {
     straightJoinToleranceDeg: resolved.straightJoinToleranceDeg,
@@ -67,8 +80,24 @@ export function resolveWalls(walls: Wall[], options: ResolveOptions = {}): WallR
     });
   }
 
+  const wallById = new Map(walls.map((w) => [w.id, w]));
+  const declaredThicknessByEdgeId = new Map<string, number>();
+  const pourIdByEdgeId = new Map<string, string>();
+  for (const edge of edges) {
+    const wall = wallById.get(edge.wallId);
+    if (!wall) continue;
+    declaredThicknessByEdgeId.set(edge.id, wall.thickness);
+    pourIdByEdgeId.set(edge.id, wall.pourId);
+  }
+
   const { regions: rawRegions, regionIdByCycleId } = buildRegions(faces, typedNodes);
-  const { pairings, coverageByRegionId } = pairFaces(typedNodes, faces, rawRegions, resolved);
+  const { pairings, coverageByRegionId, nearMisses } = pairFaces(
+    typedNodes,
+    faces,
+    rawRegions,
+    resolved,
+    { declaredThicknessByEdgeId, pourIdByEdgeId }
+  );
   const regions = classifyRegionKinds(rawRegions, coverageByRegionId, resolved, diagnostics);
 
   const roomRegionIds = new Set(
@@ -79,7 +108,6 @@ export function resolveWalls(walls: Wall[], options: ResolveOptions = {}): WallR
     roomRegionIds,
   });
 
-  const wallById = new Map(walls.map((w) => [w.id, w]));
   const edgeById = new Map(edges.map((e) => [e.id, e]));
   const regionById = new Map(regions.map((r) => [r.id, r]));
   const sides = buildEdgeSides(edges, faces, regionIdByCycleId);
@@ -139,15 +167,8 @@ export function resolveWalls(walls: Wall[], options: ResolveOptions = {}): WallR
           nodeIds: [],
         });
       }
-      if (wall.pourId !== partnerWall.pourId) {
-        diagnostics.push({
-          code: "pour-mismatch",
-          severity: "warning",
-          message: `שני הקווים של הקיר שויכו ליציקות שונות — נשמרה היציקה של ${wall.id}`,
-          wallIds: [wall.id, partnerWall.id],
-          nodeIds: [],
-        });
-      }
+      // No pour check here: pairFaces refuses to pair across pours in the
+      // first place, so a paired wall's two contours are always in one pour.
 
       resolvedWalls.push(
         buildPairedWall(wall, edge, side, partnerWall, partnerSide, pairing, regionById, diagnostics)
@@ -172,6 +193,13 @@ export function resolveWalls(walls: Wall[], options: ResolveOptions = {}): WallR
     wallByEdgeId.set(`edge:${resolvedWall.id}`, resolvedWall);
   }
 
+  const pairedEdgeIds = new Set(
+    materialPairings.flatMap((p) => [p.edgeAId, p.edgeBId])
+  );
+  const unpairedEdgeIds = new Set(
+    edges.filter((e) => !pairedEdgeIds.has(e.id)).map((e) => e.id)
+  );
+  reportPairingFailures(nearMisses, unpairedEdgeIds, edgeById, diagnostics);
   reportAutoPairings(materialPairings, edgeById, diagnostics);
 
   return {
@@ -265,21 +293,22 @@ function buildPairedWall(
   const flags: string[] = [...pairing.flags];
   if (edge.flags.length > 0) flags.push(...edge.flags);
 
+  // The wall thickness IS the distance between its two faces. On a two-contour
+  // plan the user has already drawn that distance, so the drawing is the truth
+  // and the typed field gets updated from it — not the other way round. Keeping
+  // a separate typed number here is what let `thickness` and `faceBOffsetCm`
+  // disagree, so the BOM sized rods for one wall while the canvas drew another.
+  const thickness = quantize(pairing.measuredThicknessCm);
+
   return {
     id: wall.id,
     pourId: wall.pourId,
     sourceWallId: wall.id,
     consumedWallIds: [partnerWall.id],
     centerline: [{ ...wall.innerLine[0] }, { ...wall.innerLine[1] }],
-    // The thickness the user typed, not the distance between the two drawn
-    // contours. The engineer sets the wall thickness; the second contour only
-    // says which drawn line is the far face, so it isn't formed twice.
-    thickness: wall.thickness,
-    thicknessSource: "declared",
-    // Face B sits on the contour the user drew for it — that is the whole point
-    // of drawing two contours. The typed thickness stays the engineering input
-    // (rod length, BOM); it does not move the drawn line.
-    faceBOffsetCm: pairing.measuredThicknessCm,
+    thickness,
+    thicknessSource: "measured",
+    faceBOffsetCm: thickness,
     outwardSign,
     faces: [
       {
@@ -291,7 +320,11 @@ function buildPairedWall(
       },
       {
         id: "faceB",
-        line: [{ ...partnerWall.innerLine[0] }, { ...partnerWall.innerLine[1] }],
+        // The partner's own drawn line, snapped onto exactly `thickness` away.
+        // Only the perpendicular offset moves — every position along the wall
+        // axis is preserved, because that extent is what faceRuns reads to work
+        // out how far the outer face wraps past each corner.
+        line: snapToOffset(partnerWall.innerLine, wall.innerLine, thickness),
         isInterior: isInteriorRegion(faceBRegionId, regionById),
         regionId: faceBRegionId,
         sourceWallId: partnerWall.id,
@@ -299,6 +332,38 @@ function buildPairedWall(
     ],
     flags,
   };
+}
+
+/** Whole tenths of a cm — far finer than the tiling grid, far coarser than float noise. */
+function quantize(cm: number): number {
+  return Math.round(cm * 10) / 10;
+}
+
+/**
+ * `line` translated perpendicular to `reference` so it sits exactly `offsetCm`
+ * away, keeping the side it is already on and both endpoints' positions along
+ * the reference's axis.
+ */
+function snapToOffset(
+  line: [Point, Point],
+  reference: [Point, Point],
+  offsetCm: number
+): [Point, Point] {
+  const normal = unitNormal(reference[0], reference[1]);
+  if (!normal) return [{ ...line[0] }, { ...line[1] }];
+
+  const mid = { x: (line[0].x + line[1].x) / 2, y: (line[0].y + line[1].y) / 2 };
+  const toMid = { x: mid.x - reference[0].x, y: mid.y - reference[0].y };
+  const side = toMid.x * normal.x + toMid.y * normal.y >= 0 ? 1 : -1;
+
+  return [0, 1].map((i) => {
+    const p = line[i]!;
+    const foot = closestPointOnLine(p, reference);
+    return {
+      x: foot.x + normal.x * offsetCm * side,
+      y: foot.y + normal.y * offsetCm * side,
+    };
+  }) as [Point, Point];
 }
 
 function buildUnpairedWall(
@@ -401,6 +466,100 @@ function classifyRegionKinds(
     }
     return { ...region, kind: "room" as const, pairedCoverage: coverage };
   });
+}
+
+/**
+ * Two lines closer than the graph builder's own snap tolerance can resolve.
+ * buildGraph merges endpoints within SNAP_TOLERANCE_CM, so at this range the
+ * two contours' corners fuse into single nodes and there is no ring left to
+ * recognise. Reported before anything else runs, because every later answer
+ * about such a wall is arbitrary — better a clear error than a plausible-looking
+ * doubled layout.
+ */
+function reportWallsBelowResolution(walls: Wall[], diagnostics: Diagnostic[]): void {
+  const reported = new Set<string>();
+
+  for (let i = 0; i < walls.length; i++) {
+    for (let j = i + 1; j < walls.length; j++) {
+      const a = walls[i]!;
+      const b = walls[j]!;
+
+      const angle = angleBetweenDeg(a.innerLine, b.innerLine);
+      if (Math.min(angle, 180 - angle) > CONTOUR_PARALLEL_TOLERANCE_DEG) continue;
+
+      const overlap = projectedOverlap(a.innerLine, b.innerLine);
+      if (!overlap || overlap[1] - overlap[0] <= 0) continue;
+
+      const mid = {
+        x: (b.innerLine[0].x + b.innerLine[1].x) / 2,
+        y: (b.innerLine[0].y + b.innerLine[1].y) / 2,
+      };
+      const gap = perpendicularDistance(mid, a.innerLine);
+      // Zero is two coincident traces of one line, not a thin wall — that is a
+      // duplicate-drawing problem and gets caught by the graph instead.
+      if (gap <= 0 || gap >= GEOMETRY_RESOLUTION_FLOOR_CM) continue;
+
+      const key = [a.id, b.id].sort().join("|");
+      if (reported.has(key)) continue;
+      reported.add(key);
+
+      diagnostics.push({
+        code: "wall-below-geometry-resolution",
+        severity: "error",
+        message: `שני הקווים של הקיר נמצאים במרחק ${gap.toFixed(1)} ס"מ — קטן מהמינימום של ${GEOMETRY_RESOLUTION_FLOOR_CM} ס"מ שהמנוע יכול להבחין בו. יש להרחיק אותם או לצייר את הקיר בקו אחד עם עובי מוקלד`,
+        wallIds: [a.id, b.id],
+        nodeIds: [],
+      });
+    }
+  }
+}
+
+const REJECTION_MESSAGES: Record<PairRejectionReason, string> = {
+  variance: "המרחק ביניהם אינו קבוע לאורך הקיר",
+  thickness: "המרחק ביניהם חורג מטווח העובי הסביר",
+  pour: "שני הקווים שויכו ליציקות שונות",
+  parallel: "",
+  overlap: "",
+  "not-material": "",
+};
+
+/**
+ * Fires only when a pair that genuinely looked like one wall was turned down
+ * AND both its sides ended up tiled as independent walls — which is exactly the
+ * doubled-formwork failure. A region with a hole and low coverage is NOT enough
+ * on its own: a courtyard or a free-standing room inside a hall looks the same
+ * and is perfectly legal.
+ */
+function reportPairingFailures(
+  nearMisses: PairNearMiss[],
+  unpairedEdgeIds: Set<string>,
+  edgeById: Map<string, Edge>,
+  diagnostics: Diagnostic[]
+): void {
+  const byPair = new Map<string, PairNearMiss>();
+  for (const miss of nearMisses) {
+    if (!unpairedEdgeIds.has(miss.edgeAId) || !unpairedEdgeIds.has(miss.edgeBId)) continue;
+
+    const key = [miss.edgeAId, miss.edgeBId].sort().join("|");
+    const best = byPair.get(key);
+    // The dominant reason is the one belonging to the longest shared run: that
+    // is the reading of the two lines the user most plausibly meant.
+    if (!best || miss.overlapCm > best.overlapCm) byPair.set(key, miss);
+  }
+
+  for (const miss of byPair.values()) {
+    const wallA = edgeById.get(miss.edgeAId)?.wallId;
+    const wallB = edgeById.get(miss.edgeBId)?.wallId;
+    if (!wallA || !wallB) continue;
+
+    diagnostics.push({
+      code: "contour-pairing-failed",
+      severity: "warning",
+      message: `${wallA} ו-${wallB} נראים כשני הצדדים של אותו קיר אך לא זווגו: ${REJECTION_MESSAGES[miss.reason]}. שניהם ישובצו כקירות עצמאיים, מה שיכפיל את התבניות והכמויות`,
+      wallIds: [wallA, wallB],
+      nodeIds: [],
+    });
+  }
 }
 
 /**

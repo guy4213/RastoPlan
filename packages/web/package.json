@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"no tests yet in @rastoplan/web\""
+    "test": "../core/node_modules/.bin/vitest run"
   },
   "dependencies": {
     "@rastoplan/core": "workspace:*",

@@ -33,7 +33,7 @@ function findFreeEndpoints(walls: { id: string; innerLine: [Point, Point] }[]): 
 
 export function Toolbar() {
   const { state, dispatch } = useProject();
-  const { tool, layoutDirty, activePourId, units } = state.ui;
+  const { tool, layoutDirty, activePourId, units, orthoLock } = state.ui;
   const [notice, setNotice] = useState<string | null>(null);
   const [projectsOpen, setProjectsOpen] = useState(false);
 
@@ -118,9 +118,29 @@ export function Toolbar() {
         </button>
       </div>
 
+      {/* A mode, so it needs to be visible at all times — a held key shows
+          itself through the user's hand, a sticky one does not. Also a button,
+          so the mode can be changed without touching the keyboard. */}
+      <button
+        type="button"
+        onClick={() => dispatch({ type: "set-ortho-lock", value: !orthoLock })}
+        title="Shift מחליף בין ציור ישר לציור חופשי"
+        style={{
+          padding: "4px 10px",
+          borderRadius: 4,
+          border: `1px solid ${orthoLock ? "#0f172a" : "#cbd5e1"}`,
+          background: orthoLock ? "#0f172a" : "#fff",
+          color: orthoLock ? "#fff" : "#475569",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          fontSize: 12,
+        }}
+      >
+        {orthoLock ? "ציור ישר" : "ציור חופשי"}
+      </button>
       {tool === "draw-wall" && (
         <span style={{ fontSize: 11, color: "#64748b" }}>
-          גרירה או קליק-קליק · Shift = אורתוגונלי · Escape / קליק ימני = ביטול
+          גרירה או קליק-קליק · Shift = מחליף ישר/חופשי · Escape / קליק ימני = ביטול
         </span>
       )}
       {tool === "select" && (
@@ -154,6 +174,9 @@ export function Toolbar() {
             מ'
           </UnitButton>
         </div>
+        {state.ui.notice && (
+          <span style={{ fontSize: 12, color: "#b91c1c", maxWidth: 380 }}>{state.ui.notice}</span>
+        )}
         {layoutDirty && state.project.walls.length > 0 && (
           <span style={{ fontSize: 12, color: "#b45309" }}>הפריסה אינה מעודכנת</span>
         )}

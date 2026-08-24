@@ -47,8 +47,24 @@ describe("pairFaces", () => {
     expect(pairings[0]!.overlapCm).toBeCloseTo(400);
   });
 
-  it("rejects a separation too small to be a wall", () => {
-    expect(pair(slab(10)).pairings).toHaveLength(0);
+  it("pairs a thin wall — the old 15cm floor threw real walls away", () => {
+    // This used to be asserted the other way round, and that assertion WAS the
+    // double-wall bug: below the floor nothing paired, nothing was consumed,
+    // and both contours got tiled as independent walls with double the BOM.
+    for (const gap of [5, 8, 10, 12]) {
+      const { pairings } = pair(slab(gap));
+      const long = pairings.find((p) => p.edgeAId === "edge:w0" && p.edgeBId === "edge:w2");
+
+      expect(long, `gap=${gap}`).toBeDefined();
+      expect(long!.measuredThicknessCm).toBeCloseTo(gap);
+    }
+  });
+
+  it("refuses a separation the graph builder itself cannot resolve", () => {
+    // Below 2x the snap tolerance the two contours' corner nodes merge in
+    // buildGraph, so there is no ring left to recognise. Refusing beats
+    // answering from geometry that no longer exists.
+    expect(pair(slab(3)).pairings).toHaveLength(0);
   });
 
   it("pairs at any thickness by default — the drawing convention decides, not the distance", () => {

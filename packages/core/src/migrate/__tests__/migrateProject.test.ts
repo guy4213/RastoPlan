@@ -75,3 +75,67 @@ describe("migrateProject", () => {
     expect(migrateProject(legacyProject()).walls).toEqual(legacyProject().walls);
   });
 });
+
+/** Rules fields a project saved before them would simply not have. */
+const FIELDS_ADDED_LATER = ["timberGapMin", "timberGapMax", "strutSpacingCm"] as const;
+
+/** A project saved at v2: correct placement shape, but predating later fields. */
+function v2Project(): Project {
+  const rules = { ...DEFAULT_ACCESSORY_RULES };
+  for (const field of FIELDS_ADDED_LATER) delete (rules as Record<string, unknown>)[field];
+
+  return {
+    ...legacyProject(),
+    schemaVersion: 2,
+    rules: rules as Project["rules"],
+    placements: [],
+  };
+}
+
+describe("migrateProject — v2 to v3", () => {
+  it("does not stop at v2 the way the old early return did", () => {
+    // The previous shape returned any project already at the current version
+    // untouched, so a v2 blob skipped every later step entirely.
+    expect(migrateProject(v2Project()).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+  });
+
+  it("fills in every AccessoryRules field the project predates", () => {
+    // A missing rules field is not a cosmetic gap: it reaches the tiling
+    // arithmetic as `undefined` and comes out the far end as a NaN clear length.
+    const rules = migrateProject(v2Project()).rules;
+
+    for (const key of FIELDS_ADDED_LATER) {
+      expect(rules[key], key).toBe(DEFAULT_ACCESSORY_RULES[key]);
+    }
+    for (const value of Object.values(rules)) {
+      expect(Number.isNaN(value as number)).toBe(false);
+    }
+  });
+
+  it("keeps values the project already set rather than resetting them to defaults", () => {
+    const customised = v2Project();
+    customised.rules = { ...customised.rules, strutSpacingCm: 120 };
+
+    expect(migrateProject(customised).rules.strutSpacingCm).toBe(120);
+  });
+
+  it("gives every pour a default wall thickness", () => {
+    for (const pour of migrateProject(v2Project()).pours) {
+      expect(pour.defaultThicknessCm).toBe(20);
+    }
+  });
+
+  it("does not invent a pairing — only a compute may establish one", () => {
+    for (const wall of migrateProject(v2Project()).walls) {
+      expect(wall.pairedWallId).toBeUndefined();
+    }
+  });
+
+  it("moves nothing on the canvas", () => {
+    const before = v2Project();
+    const after = migrateProject(before);
+
+    expect(after.walls).toEqual(before.walls);
+    expect(after.placements).toEqual(before.placements);
+  });
+});

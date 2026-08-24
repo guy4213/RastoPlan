@@ -3,7 +3,12 @@ import { Group, Line, Text } from "react-konva";
 import type Konva from "konva";
 import type { Placement, Point, ProjectLayout, Wall } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
-import { placementCorners, wallDirection, wallNormal } from "./geometry.js";
+import {
+  PLACEMENT_BAND_DEPTH_CM,
+  placementBandCorners,
+  placementsWithOuterCornerJoint,
+  wallDirection,
+} from "./geometry.js";
 import { resolvedWallFrame } from "./resolvedWallFrame.js";
 
 interface Props {
@@ -26,9 +31,11 @@ function colorsFor(placement: Placement): Colors {
   const isFlagged = placement.flags.some((f) => f !== "outer-corner-protrusion");
   if (isFlagged) return { fill: "#fecaca", stroke: "#b91c1c", text: "#7f1d1d" };
   if (placement.source === "manual") return { fill: "#fef3c7", stroke: "#b45309", text: "#78350f" };
-  if (placement.flags.includes("outer-corner-protrusion")) return { fill: "#e0e7ff", stroke: "#4f46e5", text: "#3730a3" };
+  if (placement.flags.includes("outer-corner-protrusion"))
+    return { fill: "#e0e7ff", stroke: "#4f46e5", text: "#3730a3" };
   if (placement.kind === "timber") return { fill: "#fde68a", stroke: "#a16207", text: "#713f12" };
-  if (placement.kind === "corner-panel") return { fill: "#cffafe", stroke: "#0e7490", text: "#155e75" };
+  if (placement.kind === "corner-panel")
+    return { fill: "#cffafe", stroke: "#0e7490", text: "#155e75" };
   // Green reads as "faces a room", blue as "faces the outside" — so a
   // partition between two rooms comes out green on both faces.
   if (!placement.faceIsInterior) return { fill: "#dbeafe", stroke: "#1d4ed8", text: "#1e3a8a" };
@@ -41,13 +48,7 @@ function colorsFor(placement: Placement): Colors {
  * on the vertex: the leg before the run starts at its far end, the one after
  * it at its near end.
  */
-function foldPoints(
-  c0: Point,
-  c1: Point,
-  c2: Point,
-  c3: Point,
-  atStart: boolean
-): number[] {
+function foldPoints(c0: Point, c1: Point, c2: Point, c3: Point, atStart: boolean): number[] {
   // c0..c1 lie on the wall line, c2..c3 on the band's outer edge.
   return atStart ? [c1.x, c1.y, c3.x, c3.y] : [c0.x, c0.y, c2.x, c2.y];
 }
@@ -91,9 +92,11 @@ export function Placements({
   onSelect,
   onContextMenu,
 }: Props) {
-  const { dispatch } = useProject();
+  const { state, dispatch } = useProject();
   const wallById = useMemo(() => new Map(walls.map((w) => [w.id, w])), [walls]);
-  const depth = 8; // cm of visual thickness for the band
+  const depth = PLACEMENT_BAND_DEPTH_CM;
+  const cornerProtrusion = state.project.rules.outerCornerProtrusionCm;
+  const cornerClearance = state.project.rules.outerCornerLapGapCm;
 
   // One physical corner panel is two legs sharing a groupId. Labelling both
   // printed "C30x30" and "30" next to each other on one panel, which is what
@@ -108,53 +111,54 @@ export function Placements({
     return new Set(firstOfGroup.values());
   }, [placements]);
 
+  // Canvas-only copies: exactly one panel owns each outside corner square and
+  // stops 2cm short of its outer edge; the other stops at the square's side.
+  // On the orthogonal reference the deterministic owner is the vertical panel.
+  // Engine placements and quantities stay intact.
+  const paintedPlacements = useMemo(
+    () =>
+      placementsWithOuterCornerJoint(
+        placements,
+        walls,
+        layout,
+        cornerProtrusion,
+        cornerClearance
+      ),
+    [placements, walls, layout, cornerProtrusion, cornerClearance]
+  );
+  const paintedById = useMemo(
+    () => new Map(paintedPlacements.map((placement) => [placement.id, placement])),
+    [paintedPlacements]
+  );
   return (
     <>
       {placements.map((placement) => {
         const wall = wallById.get(placement.wallId);
         if (!wall) return null;
 
-        const frame = resolvedWallFrame(wall, layout);
-        // Face B sits one wall thickness out along the resolved outward
-        // direction; face A sits on the centerline. Both bands then extend
-        // away from the wall body so they never overlap it.
-        const sideSign: 1 | -1 =
-          placement.side === "faceB" ? frame.outwardSign : (-frame.outwardSign as 1 | -1);
-        const baseOffset =
-          placement.side === "faceB" ? frame.faceBOffsetCm * frame.outwardSign : 0;
+        const frame = resolvedWallFrame(wall, layout, walls);
         const dir = wallDirection(wall);
-        const n = wallNormal(wall);
 
-        const [c0, c1, c2, c3] = placementCorners(
-          wall,
-          placement.offsetAlongEdge,
-          placement.width,
-          sideSign,
-          depth
-        );
-        const push = { x: n.x * baseOffset, y: n.y * baseOffset };
-        const points = [
-          c0.x + push.x, c0.y + push.y,
-          c1.x + push.x, c1.y + push.y,
-          c2.x + push.x, c2.y + push.y,
-          c3.x + push.x, c3.y + push.y,
-        ];
+        // Render the visual corner joint from the copied placement, while the
+        // original placement remains the source for editing and calculations.
+        const paintedPlacement = paintedById.get(placement.id) ?? placement;
+        const [c0, c1, c2, c3] = placementBandCorners(paintedPlacement, wall, frame, depth);
+        const points = [c0.x, c0.y, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y];
 
         const colors = colorsFor(placement);
         const selected = placement.id === selectedPlacementId;
 
-        const [a] = wall.innerLine;
-        const midOffset = placement.offsetAlongEdge + placement.width / 2;
+        // Centre of the band, straight off its own corners.
         const labelPos = {
-          x: a.x + dir.x * midOffset + (n.x * sideSign * depth) / 2 + push.x,
-          y: a.y + dir.y * midOffset + (n.y * sideSign * depth) / 2 + push.y,
+          x: (c0.x + c1.x + c2.x + c3.x) / 4,
+          y: (c0.y + c1.y + c2.y + c3.y) / 4,
         };
         const angleDeg = (Math.atan2(dir.y, dir.x) * 180) / Math.PI;
 
         // A corner panel is drawn deeper than a straight one and outlined
         // heavier, so the leg reads as the wrapped panel it is rather than as a
         // gap where the straight run stops. It only ever exists on a face that
-        // borders a room — the outside gets an overlap strip instead.
+        // borders a room; outside panels meet edge-to-edge without overlapping.
         const isCornerLeg = placement.kind === "corner-panel";
 
         const labelText =

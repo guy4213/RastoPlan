@@ -19,9 +19,12 @@ export function PoursPanel() {
       <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
         {pours.map((pour) => {
           const isActive = pour.id === activePourId;
+          const selectPour = () =>
+            dispatch({ type: "set-active-pour", pourId: pour.id });
           return (
             <li
               key={pour.id}
+              onClick={selectPour}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -31,51 +34,77 @@ export function PoursPanel() {
                 border: `1px solid ${isActive ? "#6366f1" : "#e2e8f0"}`,
                 borderRadius: 4,
                 marginBottom: 6,
+                cursor: "pointer",
               }}
             >
               <button
                 type="button"
-                onClick={() => dispatch({ type: "set-active-pour", pourId: pour.id })}
+                aria-pressed={isActive}
+                aria-label={`בחר ${pour.name}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  selectPour();
+                }}
                 style={{
-                  background: "none",
-                  border: "none",
+                  width: 22,
+                  height: 22,
+                  borderRadius: "50%",
+                  background: isActive ? "#6366f1" : "#fff",
+                  border: `2px solid ${isActive ? "#4f46e5" : "#94a3b8"}`,
                   padding: 0,
                   cursor: "pointer",
-                  flex: 1,
-                  textAlign: "right",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
+                  flexShrink: 0,
+                  display: "grid",
+                  placeItems: "center",
                 }}
               >
+                {isActive && (
+                  <span style={{ color: "#fff", fontSize: 13, lineHeight: 1 }}>✓</span>
+                )}
+              </button>
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 16,
+                  height: 16,
+                  borderRadius: 3,
+                  background: pour.color,
+                  flexShrink: 0,
+                }}
+              />
+              <input
+                type="text"
+                value={pour.name}
+                onFocus={selectPour}
+                onChange={(e) =>
+                  dispatch({ type: "update-pour", pourId: pour.id, patch: { name: e.target.value } })
+                }
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  border: "none",
+                  background: "transparent",
+                  fontSize: 14,
+                  fontFamily: "inherit",
+                  textAlign: "right",
+                  color: "inherit",
+                }}
+              />
+              {isActive && (
                 <span
                   style={{
-                    display: "inline-block",
-                    width: 16,
-                    height: 16,
-                    borderRadius: 3,
-                    background: pour.color,
-                    flexShrink: 0,
+                    padding: "2px 6px",
+                    borderRadius: 10,
+                    background: "#c7d2fe",
+                    color: "#3730a3",
+                    fontSize: 10,
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
                   }}
-                />
-                <input
-                  type="text"
-                  value={pour.name}
-                  onChange={(e) =>
-                    dispatch({ type: "update-pour", pourId: pour.id, patch: { name: e.target.value } })
-                  }
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    flex: 1,
-                    border: "none",
-                    background: "transparent",
-                    fontSize: 14,
-                    fontFamily: "inherit",
-                    textAlign: "right",
-                    color: "inherit",
-                  }}
-                />
-              </button>
+                >
+                  פעילה
+                </span>
+              )}
               <input
                 type="color"
                 value={pour.color}
@@ -87,7 +116,10 @@ export function PoursPanel() {
               {pours.length > 1 && (
                 <button
                   type="button"
-                  onClick={() => dispatch({ type: "delete-pour", pourId: pour.id })}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    dispatch({ type: "delete-pour", pourId: pour.id });
+                  }}
                   style={{ ...smallButton, color: "#b91c1c" }}
                 >
                   ✕

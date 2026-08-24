@@ -72,7 +72,8 @@ export function Canvas() {
   const { state, dispatch } = useProject();
   const containerRef = useRef<HTMLDivElement>(null);
   const size = useSize(containerRef);
-  const { view, tool, selectedWallId, selectedWallIds, selectedPlacementId, units } = state.ui;
+  const { view, tool, selectedWallId, selectedWallIds, selectedPlacementId, units, orthoLock } =
+    state.ui;
   const { walls, pours, placements, rules, layout } = state.project;
 
   const [drawStart, setDrawStart] = useState<Point | null>(null);
@@ -97,6 +98,63 @@ export function Canvas() {
   const [snapHint, setSnapHint] = useState<Point | null>(null);
 
   const snapCm = ENDPOINT_SNAP_PIXELS / view.scale;
+
+  // Middle-button pan. Deliberately NOT a tool: switching the active tool to
+  // pan and back would cancel a half-drawn wall and lose the modifier state,
+  // and the user expects to nudge the viewport mid-draw and carry on. Held in
+  // a ref because every pointer handler reads it and none should re-render.
+  const panRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const [panning, setPanning] = useState(false);
+
+  const endPan = useCallback((target: Element | null, pointerId: number) => {
+    if (panRef.current?.pointerId !== pointerId) return;
+    panRef.current = null;
+    setPanning(false);
+    if (target && "releasePointerCapture" in target) {
+      try {
+        (target as HTMLElement).releasePointerCapture(pointerId);
+      } catch {
+        // Already released — the browser does this itself on pointercancel.
+      }
+    }
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 1) return;
+      // Without this the browser opens its auto-scroll widget on middle-click.
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      panRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        originX: view.offset.x,
+        originY: view.offset.y,
+      };
+      setPanning(true);
+    },
+    [view.offset.x, view.offset.y]
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const pan = panRef.current;
+      if (!pan || pan.pointerId !== e.pointerId) return;
+      e.preventDefault();
+      dispatch({
+        type: "set-view",
+        view: {
+          scale: view.scale,
+          offset: {
+            x: pan.originX + (e.clientX - pan.startX),
+            y: pan.originY + (e.clientY - pan.startY),
+          },
+        },
+      });
+    },
+    [dispatch, view.scale]
+  );
 
   const stageToWorld = useCallback(
     (stageX: number, stageY: number): Point => ({
@@ -152,6 +210,7 @@ export function Canvas() {
 
   const handleMouseDown = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
+      if (panRef.current) return;
       const stage = e.target.getStage();
       const pointer = stage?.getPointerPosition();
       if (!pointer || !stage) return;
@@ -176,7 +235,7 @@ export function Canvas() {
 
       // Second click of a click-click draw commits the wall.
       if (drawMode === "awaiting-second" && drawStart) {
-        const end = applyAxisLock(drawStart, snapEndpoint(world, walls, snapCm), e.evt.shiftKey);
+        const end = applyAxisLock(drawStart, snapEndpoint(world, walls, snapCm), orthoLock);
         commitWall(drawStart, end);
         cancelDraw();
         return;
@@ -195,6 +254,7 @@ export function Canvas() {
 
   const handleMouseMove = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
+      if (panRef.current) return;
       const stage = e.target.getStage();
       const pointer = stage?.getPointerPosition();
       if (!pointer) return;
@@ -209,7 +269,7 @@ export function Canvas() {
       const world = stageToWorld(pointer.x, pointer.y);
       const snapped = snapEndpoint(world, walls, snapCm);
       rawDrawEndRef.current = snapped;
-      setDrawEnd(applyAxisLock(drawStart, snapped, e.evt.shiftKey));
+      setDrawEnd(applyAxisLock(drawStart, snapped, orthoLock));
       setSnapHint(findEndpointSnapTarget(world, walls, snapCm));
     },
     [tool, drawStart, walls, stageToWorld, marquee, snapCm]
@@ -217,6 +277,7 @@ export function Canvas() {
 
   const handleMouseUp = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
+      if (panRef.current) return;
       const stageObj = e.target.getStage();
       if (marquee) {
         const rect = normalizeRect(marquee);
@@ -249,7 +310,7 @@ export function Canvas() {
         return;
       }
 
-      commitWall(drawStart, applyAxisLock(drawStart, drawEnd, e.evt.shiftKey));
+      commitWall(drawStart, applyAxisLock(drawStart, drawEnd, orthoLock));
       cancelDraw();
     },
     [tool, drawMode, drawStart, drawEnd, commitWall, cancelDraw, marquee, walls, dispatch]
@@ -257,6 +318,7 @@ export function Canvas() {
 
   const handleStageClick = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
+      if (panRef.current) return;
       // Any click closes the floating context menu, wherever it landed.
       if (contextMenu) setContextMenu(null);
       // Clicking blank stage clears selection (Konva sets target to Stage).
@@ -285,25 +347,37 @@ export function Canvas() {
     [tool, drawStart, drawMode, cancelDraw, marquee]
   );
 
-  // Shift toggles the axis lock instantly, without waiting for the next
-  // mousemove — otherwise "press Shift" only takes effect after the user
-  // jiggles the cursor, which feels broken on CAD tools they know.
+  // Shift flips the ortho lock. One keydown per press: the repeat events from
+  // holding the key would otherwise flap the mode on and off, and there is no
+  // keyup handler at all — releasing Shift must not undo the user's choice.
   useEffect(() => {
-    if (tool !== "draw-wall") return;
-    if (!drawStart) return;
-    const onShift = (e: KeyboardEvent) => {
-      if (e.key !== "Shift") return;
-      const raw = rawDrawEndRef.current;
-      if (!raw) return;
-      setDrawEnd(applyAxisLock(drawStart, raw, e.type === "keydown"));
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Shift" || e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      dispatch({ type: "set-ortho-lock", value: !orthoLock });
     };
-    window.addEventListener("keydown", onShift);
-    window.addEventListener("keyup", onShift);
-    return () => {
-      window.removeEventListener("keydown", onShift);
-      window.removeEventListener("keyup", onShift);
-    };
-  }, [tool, drawStart]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dispatch, orthoLock]);
+
+  // Re-apply the lock to the wall being drawn the moment the mode changes,
+  // rather than at the next mousemove — waiting for the user to jiggle the
+  // cursor before the line snaps feels broken on the CAD tools they know.
+  useEffect(() => {
+    if (tool !== "draw-wall" || !drawStart) return;
+    const raw = rawDrawEndRef.current;
+    if (!raw) return;
+    setDrawEnd(applyAxisLock(drawStart, raw, orthoLock));
+  }, [orthoLock, tool, drawStart]);
 
   // Keyboard: tool switch (V/D/W), Delete selection, Escape cancels.
   // Skip when the user is typing into a form field so the shortcuts
@@ -369,11 +443,28 @@ export function Canvas() {
     if (tool !== "draw-wall") cancelDraw();
   }, [tool, cancelDraw]);
 
-  const cursor =
-    tool === "draw-wall" ? "crosshair" : tool === "weld" ? "cell" : "default";
+  const cursor = panning
+    ? "grabbing"
+    : tool === "draw-wall"
+      ? "crosshair"
+      : tool === "weld"
+        ? "cell"
+        : "default";
 
   return (
-    <div ref={containerRef} style={{ flex: 1, background: "#f8fafc", position: "relative", cursor }}>
+    <div
+      ref={containerRef}
+      style={{ flex: 1, background: "#f8fafc", position: "relative", cursor }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={(e) => endPan(e.currentTarget, e.pointerId)}
+      onPointerCancel={(e) => endPan(e.currentTarget, e.pointerId)}
+      // The browser opens its auto-scroll widget on middle-click unless both
+      // the pointerdown and the resulting auxclick are suppressed.
+      onAuxClick={(e) => {
+        if (e.button === 1) e.preventDefault();
+      }}
+    >
       <Stage
         width={size.width}
         height={size.height}
@@ -383,7 +474,7 @@ export function Canvas() {
         onMouseUp={handleMouseUp}
         onClick={handleStageClick}
         onContextMenu={handleContextMenu}
-        draggable={tool === "select"}
+        draggable={tool === "select" && !panning}
         x={view.offset.x}
         y={view.offset.y}
         scaleX={view.scale}

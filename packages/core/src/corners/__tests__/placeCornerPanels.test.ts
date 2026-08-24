@@ -66,9 +66,9 @@ describe("placeCornerPanels — a corner panel at EVERY corner", () => {
 
   it("leaves no hole at the ends: leg + run + leg covers the wall exactly", () => {
     const result = prep(rectangleWalls());
-    const bottom = [
-      ...result.cornerPanels.filter((p) => p.edgeId === "edge:bottom"),
-    ].sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
+    const bottom = [...result.cornerPanels.filter((p) => p.edgeId === "edge:bottom")].sort(
+      (a, b) => a.offsetAlongEdge - b.offsetAlongEdge
+    );
     const run = result.runs.get("edge:bottom")!.faceA;
 
     // The near leg fills [0,30], the run takes [30,370], the far leg [370,400].
@@ -160,20 +160,21 @@ describe("placeCornerPanels — a wall with a room on both sides", () => {
   });
 });
 
-describe("placeCornerPanels — the outer corner is just two straight panels", () => {
+describe("placeCornerPanels — the outer corner is an overlapped joint", () => {
   it("emits no overlap strip at all", () => {
     expect(prep(rectangleWalls()).protrusions).toHaveLength(0);
     expect(prep(lShapeWalls()).protrusions).toHaveLength(0);
   });
 
-  it("runs each outer face right up to the outer corner point instead", () => {
+  it("keeps the calculated run unchanged and records the drawing lap", () => {
     const run = prep(rectangleWalls()).runs.get("edge:bottom")!.faceB;
 
-    // The outer face of a 400cm wall between two 20cm walls covers the whole
-    // outer contour edge: 20 + 400 + 20. The perpendicular wall's outer face
-    // then starts exactly where this one ends.
+    // -20..420 is the real outer-face extent. The 10cm lap is metadata for the
+    // canvas, not another 20cm fed through panel selection.
     expect(run.startOffset).toBe(-20);
     expect(run.clearLength).toBe(440);
+    expect(run.lapAtA).toBe(10);
+    expect(run.lapAtB).toBe(10);
   });
 
   it("wraps by each neighbour's own thickness, not a single global one", () => {
@@ -181,8 +182,12 @@ describe("placeCornerPanels — the outer corner is just two straight panels", (
     // past the corner it shares with the thick bottom wall and 20 at its far end.
     const run = prep(rectangleWallsMixedThickness()).runs.get("edge:right")!.faceB;
 
+    // The stored run wraps only by neighbour thickness: -30 at the thick
+    // bottom and +20 at the top. Its 8cm lap stays drawing metadata.
     expect(run.startOffset).toBe(-30);
     expect(run.clearLength).toBe(30 + 300 + 20);
+    expect(run.lapAtA).toBe(8);
+    expect(run.lapAtB).toBe(8);
   });
 });
 
