@@ -14,7 +14,7 @@ import type { OutwardSign, Point, ProjectLayout, ResolvedWall, Wall } from "@ras
 export interface ResolvedWallFrame {
   centerline: [Point, Point];
   thickness: number;
-  /** false while a newly drawn single line is still waiting for user input */
+  /** Kept for saved-project compatibility; current walls always have a default. */
   thicknessIsSet: boolean;
   /** where face B's panels sit, perpendicular to the centerline */
   faceBOffsetCm: number;
@@ -137,7 +137,7 @@ export function resolvedWallFrame(
     return {
       centerline: wall.innerLine,
       thickness: wall.thickness,
-      thicknessIsSet: wall.thicknessSet !== false,
+      thicknessIsSet: true,
       faceBOffsetCm: wall.thickness,
       outwardSign: 1,
       faceAIsInterior: false,
@@ -151,7 +151,7 @@ export function resolvedWallFrame(
   return {
     centerline: wall.innerLine,
     thickness: wall.thickness,
-    thicknessIsSet: wall.thicknessSet !== false,
+    thicknessIsSet: true,
     faceBOffsetCm: wall.thickness,
     outwardSign: fallbackOutwardSign(wall, walls),
     faceAIsInterior: true,

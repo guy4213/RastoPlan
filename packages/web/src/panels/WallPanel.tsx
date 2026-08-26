@@ -19,7 +19,7 @@ export function WallPanel() {
   const { state, dispatch } = useProject();
   const wall = state.project.walls.find((w) => w.id === state.ui.selectedWallId) ?? null;
   const units = state.ui.units;
-  const thicknessIsSet = wall ? wall.thicknessSet !== false : false;
+  const thicknessIsSet = wall !== null;
   const visibleThickness = wall
     ? displayedWallThickness(wall, state.project.layout, state.project.walls)
     : 0;
@@ -164,9 +164,7 @@ export function WallPanel() {
         <p style={{ margin: 0, fontSize: 11, color: partnerMissing ? "#b91c1c" : "#64748b", lineHeight: 1.4 }}>
           {partnerMissing
             ? "הקישור לקו השני אינו תקף — יש לחשב מחדש לפני שינוי העובי."
-            : !thicknessIsSet
-              ? "לא הוגדר עובי. אפשר להקליד כאן או ללחוץ על ‘הגדר עובי’ בקנבס."
-              : isPaired
+            : isPaired
               ? "העובי נמדד חי בין שני הקווים, גם לפני חישוב. שינוי כאן יזיז את הקו השני ויסגור מחדש את הפינות."
               : "העובי הוקלד. הפאה השנייה נגזרת ממנו. אפשר גם לגרור את הידית שעל קו המידה בקנבס."}
         </p>

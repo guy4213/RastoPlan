@@ -632,21 +632,15 @@ export function reduce(state: AppState, action: Action): AppState {
     }
 
     case "compute": {
-      const unsetCount = state.project.walls.filter((wall) => wall.thicknessSet === false).length;
-      if (unsetCount > 0) {
-        return {
-          ...state,
-          ui: {
-            ...state.ui,
-            notice: `יש להגדיר עובי עבור ${unsetCount} קירות לפני החישוב`,
-          },
-        };
-      }
-      const { placements, layout } = tileProject(state.project);
+      // Projects already open during a hot update can still carry the old
+      // `thicknessSet: false` marker. Apply the 20cm default here as well as
+      // on load, so the legacy flag can never block calculation.
+      const project = withHealedThickness(state.project).project;
+      const { placements, layout } = tileProject(project);
       return {
         ...state,
         project: withUpdatedAt({
-          ...withMeasuredThickness(state.project, layout),
+          ...withMeasuredThickness(project, layout),
           placements,
           layout,
         }),
