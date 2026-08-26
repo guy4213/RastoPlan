@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import type { Point } from "@rastoplan/core";
@@ -14,6 +14,15 @@ import { ENDPOINT_SNAP_PIXELS, applyAxisLock, findEndpointSnapTarget, formatLeng
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 5;
+
+// Drawing a preview line updates Canvas-local state on every pointer move.
+// These heavy, calculated layers have stable props during that gesture and
+// must not reconcile hundreds of Konva nodes just because the preview moved.
+const MemoGrid = memo(Grid);
+const MemoWalls = memo(Walls);
+const MemoPlacements = memo(Placements);
+const MemoStraightClamps = memo(StraightClamps);
+const MemoCornerClamps = memo(CornerClamps);
 
 interface MarqueeRect { x0: number; y0: number; x1: number; y1: number }
 
@@ -71,6 +80,7 @@ function useSize(ref: React.RefObject<HTMLDivElement>): Size {
 export function Canvas() {
   const { state, dispatch } = useProject();
   const containerRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<Konva.Stage>(null);
   const size = useSize(containerRef);
   const { view, tool, selectedWallId, selectedWallIds, selectedPlacementId, units, orthoLock } =
     state.ui;
@@ -103,13 +113,50 @@ export function Canvas() {
   // pan and back would cancel a half-drawn wall and lose the modifier state,
   // and the user expects to nudge the viewport mid-draw and carry on. Held in
   // a ref because every pointer handler reads it and none should re-render.
-  const panRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
-  const [panning, setPanning] = useState(false);
+  const panRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    currentX: number;
+    currentY: number;
+    scale: number;
+    rafId: number | null;
+    stageWasDraggable: boolean;
+    previousCursor: string;
+  } | null>(null);
+  const wheelRef = useRef<{
+    baseScale: number;
+    baseOffset: Point;
+    currentScale: number;
+    currentOffset: Point;
+    rafId: number | null;
+    timerId: number | null;
+  } | null>(null);
 
   const endPan = useCallback((target: Element | null, pointerId: number) => {
-    if (panRef.current?.pointerId !== pointerId) return;
+    const pan = panRef.current;
+    if (pan?.pointerId !== pointerId) return;
+    if (pan.rafId !== null) window.cancelAnimationFrame(pan.rafId);
     panRef.current = null;
-    setPanning(false);
+    const stage = stageRef.current;
+    const stageContainer = stage?.container();
+    if (stageContainer) {
+      stageContainer.style.transform = "";
+      stageContainer.style.transformOrigin = "";
+      stageContainer.style.willChange = "";
+    }
+    stage?.draggable(pan.stageWasDraggable);
+    if (target instanceof HTMLElement) target.style.cursor = pan.previousCursor;
+    if (pan.currentX !== pan.originX || pan.currentY !== pan.originY) {
+      // Persist the camera once at gesture end. Dispatching on every pointer
+      // move used to re-render hundreds of panels and labels per mouse pixel.
+      dispatch({
+        type: "set-view",
+        view: { scale: pan.scale, offset: { x: pan.currentX, y: pan.currentY } },
+      });
+    }
     if (target && "releasePointerCapture" in target) {
       try {
         (target as HTMLElement).releasePointerCapture(pointerId);
@@ -117,7 +164,7 @@ export function Canvas() {
         // Already released — the browser does this itself on pointercancel.
       }
     }
-  }, []);
+  }, [dispatch]);
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -125,16 +172,31 @@ export function Canvas() {
       // Without this the browser opens its auto-scroll widget on middle-click.
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
+      const stage = stageRef.current;
+      const stageWasDraggable = stage?.draggable() ?? false;
+      stage?.stopDrag();
+      stage?.draggable(false);
       panRef.current = {
         pointerId: e.pointerId,
         startX: e.clientX,
         startY: e.clientY,
         originX: view.offset.x,
         originY: view.offset.y,
+        currentX: view.offset.x,
+        currentY: view.offset.y,
+        scale: view.scale,
+        rafId: null,
+        stageWasDraggable,
+        previousCursor: e.currentTarget.style.cursor,
       };
-      setPanning(true);
+      const stageContainer = stage?.container();
+      if (stageContainer) {
+        stageContainer.style.transformOrigin = "0 0";
+        stageContainer.style.willChange = "transform";
+      }
+      e.currentTarget.style.cursor = "grabbing";
     },
-    [view.offset.x, view.offset.y]
+    [view.offset.x, view.offset.y, view.scale]
   );
 
   const handlePointerMove = useCallback(
@@ -142,18 +204,23 @@ export function Canvas() {
       const pan = panRef.current;
       if (!pan || pan.pointerId !== e.pointerId) return;
       e.preventDefault();
-      dispatch({
-        type: "set-view",
-        view: {
-          scale: view.scale,
-          offset: {
-            x: pan.originX + (e.clientX - pan.startX),
-            y: pan.originY + (e.clientY - pan.startY),
-          },
-        },
+      pan.currentX = pan.originX + (e.clientX - pan.startX);
+      pan.currentY = pan.originY + (e.clientY - pan.startY);
+      if (pan.rafId !== null) return;
+      pan.rafId = window.requestAnimationFrame(() => {
+        const active = panRef.current;
+        if (!active) return;
+        active.rafId = null;
+        const stageContainer = stageRef.current?.container();
+        if (!stageContainer) return;
+        const dx = active.currentX - active.originX;
+        const dy = active.currentY - active.originY;
+        // GPU-composite the already painted canvases while the pointer moves;
+        // Konva redraws once after the final view is committed above.
+        stageContainer.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
       });
     },
-    [dispatch, view.scale]
+    []
   );
 
   const stageToWorld = useCallback(
@@ -167,21 +234,90 @@ export function Canvas() {
   const handleWheel = useCallback(
     (e: Konva.KonvaEventObject<WheelEvent>) => {
       e.evt.preventDefault();
+      if (panRef.current) return;
       const stage = e.target.getStage();
-      if (!stage) return;
-      const pointer = stage.getPointerPosition();
-      if (!pointer) return;
+      const host = containerRef.current;
+      if (!stage || !host) return;
+      const hostRect = host.getBoundingClientRect();
+      const pointer = {
+        x: e.evt.clientX - hostRect.left,
+        y: e.evt.clientY - hostRect.top,
+      };
+      let gesture = wheelRef.current;
+      if (!gesture) {
+        gesture = {
+          baseScale: view.scale,
+          baseOffset: view.offset,
+          currentScale: view.scale,
+          currentOffset: view.offset,
+          rafId: null,
+          timerId: null,
+        };
+        wheelRef.current = gesture;
+        const stageContainer = stage.container();
+        stageContainer.style.transformOrigin = "0 0";
+        stageContainer.style.willChange = "transform";
+      }
       const factor = e.evt.deltaY < 0 ? 1.1 : 1 / 1.1;
-      const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, view.scale * factor));
-      const world = stageToWorld(pointer.x, pointer.y);
+      const newScale = Math.max(
+        MIN_SCALE,
+        Math.min(MAX_SCALE, gesture.currentScale * factor)
+      );
+      const world = {
+        x: (pointer.x - gesture.currentOffset.x) / gesture.currentScale,
+        y: (pointer.y - gesture.currentOffset.y) / gesture.currentScale,
+      };
       // Zoom around the pointer: keep the world point under the cursor fixed.
       const newOffset = {
         x: pointer.x - world.x * newScale,
         y: pointer.y - world.y * newScale,
       };
-      dispatch({ type: "set-view", view: { scale: newScale, offset: newOffset } });
+      gesture.currentScale = newScale;
+      gesture.currentOffset = newOffset;
+
+      if (gesture.rafId === null) {
+        gesture.rafId = window.requestAnimationFrame(() => {
+          const active = wheelRef.current;
+          const stageContainer = stageRef.current?.container();
+          if (!active || !stageContainer) return;
+          active.rafId = null;
+          const ratio = active.currentScale / active.baseScale;
+          const tx = active.currentOffset.x - ratio * active.baseOffset.x;
+          const ty = active.currentOffset.y - ratio * active.baseOffset.y;
+          stageContainer.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${ratio})`;
+        });
+      }
+
+      if (gesture.timerId !== null) window.clearTimeout(gesture.timerId);
+      gesture.timerId = window.setTimeout(() => {
+        const completed = wheelRef.current;
+        if (!completed) return;
+        if (completed.rafId !== null) window.cancelAnimationFrame(completed.rafId);
+        wheelRef.current = null;
+        const stageContainer = stageRef.current?.container();
+        if (stageContainer) {
+          stageContainer.style.transform = "";
+          stageContainer.style.transformOrigin = "";
+          stageContainer.style.willChange = "";
+        }
+        // One React/Konva render for the complete wheel gesture.
+        dispatch({
+          type: "set-view",
+          view: { scale: completed.currentScale, offset: completed.currentOffset },
+        });
+      }, 90);
     },
-    [view.scale, stageToWorld, dispatch]
+    [view.scale, view.offset, dispatch]
+  );
+
+  useEffect(
+    () => () => {
+      const gesture = wheelRef.current;
+      if (!gesture) return;
+      if (gesture.rafId !== null) window.cancelAnimationFrame(gesture.rafId);
+      if (gesture.timerId !== null) window.clearTimeout(gesture.timerId);
+    },
+    []
   );
 
   const commitWall = useCallback(
@@ -443,9 +579,26 @@ export function Canvas() {
     if (tool !== "draw-wall") cancelDraw();
   }, [tool, cancelDraw]);
 
-  const cursor = panning
-    ? "grabbing"
-    : tool === "draw-wall"
+  const selectWall = useCallback(
+    (id: string | null) => dispatch({ type: "select-wall", wallId: id }),
+    [dispatch]
+  );
+  const openWallContextMenu = useCallback(
+    (id: string, x: number, y: number) =>
+      setContextMenu({ kind: "wall", wallId: id, screenX: x, screenY: y }),
+    []
+  );
+  const selectPlacement = useCallback(
+    (id: string | null) => dispatch({ type: "select-placement", placementId: id }),
+    [dispatch]
+  );
+  const openPlacementContextMenu = useCallback(
+    (id: string, x: number, y: number) =>
+      setContextMenu({ kind: "placement", placementId: id, screenX: x, screenY: y }),
+    []
+  );
+
+  const cursor = tool === "draw-wall"
       ? "crosshair"
       : tool === "weld"
         ? "cell"
@@ -466,6 +619,7 @@ export function Canvas() {
       }}
     >
       <Stage
+        ref={stageRef}
         width={size.width}
         height={size.height}
         onWheel={handleWheel}
@@ -474,7 +628,7 @@ export function Canvas() {
         onMouseUp={handleMouseUp}
         onClick={handleStageClick}
         onContextMenu={handleContextMenu}
-        draggable={tool === "select" && !panning}
+        draggable={tool === "select"}
         x={view.offset.x}
         y={view.offset.y}
         scaleX={view.scale}
@@ -493,7 +647,7 @@ export function Canvas() {
         }}
       >
         <Layer listening={false}>
-          <Grid
+          <MemoGrid
             widthPx={size.width}
             heightPx={size.height}
             scale={view.scale}
@@ -502,37 +656,37 @@ export function Canvas() {
           />
         </Layer>
         <Layer>
-          <Walls
+          <MemoWalls
             walls={walls}
             pours={pours}
             layout={layout}
             selectedWallId={selectedWallId}
             selectedWallIds={selectedWallIds}
             scale={view.scale}
-            onSelect={(id) => dispatch({ type: "select-wall", wallId: id })}
-            onContextMenu={(id, x, y) =>
-              setContextMenu({ kind: "wall", wallId: id, screenX: x, screenY: y })
-            }
+            onSelect={selectWall}
+            onContextMenu={openWallContextMenu}
           />
-          <Placements
+        </Layer>
+        <Layer>
+          <MemoPlacements
             walls={walls}
             placements={placements}
             layout={layout}
             selectedPlacementId={selectedPlacementId}
             scale={view.scale}
-            onSelect={(id) => dispatch({ type: "select-placement", placementId: id })}
-            onContextMenu={(id, x, y) =>
-              setContextMenu({ kind: "placement", placementId: id, screenX: x, screenY: y })
-            }
+            onSelect={selectPlacement}
+            onContextMenu={openPlacementContextMenu}
           />
-          <StraightClamps
+        </Layer>
+        <Layer listening={false}>
+          <MemoStraightClamps
             walls={walls}
             placements={placements}
             layout={layout}
             rules={rules}
             scale={view.scale}
           />
-          <CornerClamps
+          <MemoCornerClamps
             walls={walls}
             placements={placements}
             layout={layout}
@@ -540,6 +694,8 @@ export function Canvas() {
             scale={view.scale}
             externalCorners={layout?.externalCorners}
           />
+        </Layer>
+        <Layer>
           {marquee && (() => {
             const r = normalizeRect(marquee);
             return (

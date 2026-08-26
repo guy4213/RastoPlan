@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { Group, Line, Text } from "react-konva";
 import type Konva from "konva";
 import type { Placement, Point, ProjectLayout, Wall } from "@rastoplan/core";
@@ -94,6 +94,14 @@ export function Placements({
 }: Props) {
   const { state, dispatch } = useProject();
   const wallById = useMemo(() => new Map(walls.map((w) => [w.id, w])), [walls]);
+  const frameByWallId = useMemo(
+    () => new Map(walls.map((wall) => [wall.id, resolvedWallFrame(wall, layout, walls)])),
+    [walls, layout]
+  );
+  // Snap points are needed only while one panel is being dragged. Computing
+  // them for every placement on every zoom/pan made rendering quadratic after
+  // calculation (hundreds of panels × hundreds of sibling scans).
+  const dragSnapTargets = useRef(new Map<string, number[]>());
   const depth = PLACEMENT_BAND_DEPTH_CM;
   const cornerProtrusion = state.project.rules.outerCornerProtrusionCm;
   const cornerClearance = state.project.rules.outerCornerLapGapCm;
@@ -136,7 +144,7 @@ export function Placements({
         const wall = wallById.get(placement.wallId);
         if (!wall) return null;
 
-        const frame = resolvedWallFrame(wall, layout, walls);
+        const frame = frameByWallId.get(wall.id) ?? resolvedWallFrame(wall, layout, walls);
         const dir = wallDirection(wall);
 
         // Render the visual corner joint from the copied placement, while the
@@ -176,8 +184,6 @@ export function Placements({
         const draggable =
           placement.kind === "panel" && !placement.flags.includes("outer-corner-protrusion");
 
-        const snapTargets = draggable ? siblingSnapPoints(placement, placements) : [];
-
         const constrainAlongAxis = (node: Konva.Node) => {
           const rawX = node.x();
           const rawY = node.y();
@@ -189,7 +195,11 @@ export function Placements({
           const clamped = Math.max(minAlong, along);
           // Snap the resulting offset to nearby siblings/wall start.
           const targetOffset = placement.offsetAlongEdge + clamped;
-          const snapped = snapToTargets(targetOffset, snapTargets, 5);
+          const snapped = snapToTargets(
+            targetOffset,
+            dragSnapTargets.current.get(placement.id) ?? [0],
+            5
+          );
           const finalAlong = snapped - placement.offsetAlongEdge;
           node.x(finalAlong * dir.x);
           node.y(finalAlong * dir.y);
@@ -201,11 +211,16 @@ export function Placements({
             draggable={draggable}
             onDragStart={(e) => {
               e.cancelBubble = true;
+              dragSnapTargets.current.set(
+                placement.id,
+                siblingSnapPoints(placement, placements)
+              );
               onSelect(placement.id);
             }}
             onDragMove={(e) => constrainAlongAxis(e.target)}
             onDragEnd={(e) => {
               e.cancelBubble = true;
+              dragSnapTargets.current.delete(placement.id);
               const node = e.target;
               const along = node.x() * dir.x + node.y() * dir.y;
               const newOffset = Math.round(placement.offsetAlongEdge + along);

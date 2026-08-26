@@ -14,6 +14,7 @@ const scenarioName = cliArgs.includes("simple")
       ? "two-pours"
       : "exact";
 const headless = cliArgs.includes("--headless");
+const benchmarkNavigation = cliArgs.includes("--benchmark-navigation");
 const cdpUrl = process.env.RASTOPLAN_CDP_URL;
 const keepOpenMs = Number(process.env.RASTOPLAN_KEEP_OPEN_MS ?? (headless ? 0 : 15_000));
 const screenshotPath = path.join(os.tmpdir(), `rastoplan-${scenarioName}-room-current.png`);
@@ -304,6 +305,51 @@ async function readProject(page) {
   await page.waitForTimeout(700);
   await page.screenshot({ path: screenshotPath, fullPage: true });
 
+  let navigationBenchmark;
+  if (benchmarkNavigation) {
+    await page.evaluate(() => {
+      window.__rastoplanLongTasks = [];
+      new PerformanceObserver((entries) => {
+        for (const entry of entries.getEntries()) {
+          window.__rastoplanLongTasks.push(entry.duration);
+        }
+      }).observe({ type: "longtask", buffered: true });
+    });
+    const canvasBox = await page.locator("canvas").first().boundingBox();
+    if (!canvasBox) throw new Error("canvas was not found for navigation benchmark");
+    const from = {
+      x: canvasBox.x + canvasBox.width * 0.5,
+      y: canvasBox.y + canvasBox.height * 0.5,
+    };
+    const panStartedAt = await page.evaluate(() => performance.now());
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down({ button: "middle" });
+    await page.mouse.move(from.x + 420, from.y + 160, { steps: 160 });
+    await page.mouse.up({ button: "middle" });
+    const panFinishedAt = await page.evaluate(() => performance.now());
+
+    const zoomStartedAt = await page.evaluate(() => performance.now());
+    await page.mouse.move(from.x, from.y);
+    for (let i = 0; i < 16; i++) await page.mouse.wheel(0, i % 2 === 0 ? -100 : 100);
+    await page.waitForTimeout(180);
+    const zoomFinishedAt = await page.evaluate(() => performance.now());
+
+    await page.getByRole("button", { name: /צייר קיר/ }).click();
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.click(from.x, from.y);
+    const previewStartedAt = await page.evaluate(() => performance.now());
+    await page.mouse.move(from.x + 360, from.y + 120, { steps: 160 });
+    const previewFinishedAt = await page.evaluate(() => performance.now());
+    await page.mouse.click(from.x + 360, from.y + 120, { button: "right" });
+
+    navigationBenchmark = await page.evaluate(({ panStartedAt, panFinishedAt, zoomStartedAt, zoomFinishedAt, previewStartedAt, previewFinishedAt }) => ({
+      panMs: Math.round((panFinishedAt - panStartedAt) * 10) / 10,
+      zoomMs: Math.round((zoomFinishedAt - zoomStartedAt) * 10) / 10,
+      previewMs: Math.round((previewFinishedAt - previewStartedAt) * 10) / 10,
+      longTasks: window.__rastoplanLongTasks.map((duration) => Math.round(duration * 10) / 10),
+    }), { panStartedAt, panFinishedAt, zoomStartedAt, zoomFinishedAt, previewStartedAt, previewFinishedAt });
+  }
+
   const project = await readProject(page);
   const nodeCounts = Object.fromEntries(
     [...new Set(project.layout.nodes.map((node) => node.type))].map((type) => [
@@ -370,6 +416,7 @@ async function readProject(page) {
       .map(({ point }) => `${point.x},${point.y}`)
       .sort(),
     consoleErrors,
+    navigationBenchmark,
     expected,
   };
   console.log(JSON.stringify(result, null, 2));

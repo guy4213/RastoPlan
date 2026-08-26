@@ -31,10 +31,6 @@ const THICKNESS_DRAG_STEP_CM = 0.5;
 /** How far off its wall a length label sits, in screen pixels at any zoom. */
 const LABEL_OFFSET_PIXELS = 20;
 
-function pourColor(pours: Pour[], pourId: string): string {
-  return pours.find((p) => p.id === pourId)?.color ?? "#475569";
-}
-
 export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, scale, onSelect, onContextMenu }: Props) {
   const { state, dispatch } = useProject();
   const draggable = state.ui.tool === "select";
@@ -195,9 +191,21 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
   // frame.outwardSign: that points at the paired far contour, which on an
   // outer ring is towards the middle of the plan.
   const labelSides = useMemo(() => labelSideByWallId(walls), [walls]);
+  const resolvedFramesByWallId = useMemo(
+    () =>
+      new Map(
+        shownWalls.map((wall) => [wall.id, resolvedWallFrame(wall, layout, shownWalls)])
+      ),
+    [shownWalls, layout]
+  );
+  const colorByPourId = useMemo(
+    () => new Map(pours.map((pour) => [pour.id, pour.color])),
+    [pours]
+  );
 
   const frameForWall = (wall: Wall) => {
-    const resolvedFrame = resolvedWallFrame(wall, layout, shownWalls);
+    const resolvedFrame =
+      resolvedFramesByWallId.get(wall.id) ?? resolvedWallFrame(wall, layout, shownWalls);
     const dragThickness = thicknessDrag?.wallId === wall.id ? thicknessDrag.thicknessCm : null;
     return dragThickness === null
       ? resolvedFrame
@@ -223,7 +231,7 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
   return (
     <>
       {shownWalls.map((wall) => {
-        const color = pourColor(pours, wall.pourId);
+        const color = colorByPourId.get(wall.pourId) ?? "#475569";
         const isPrimary = wall.id === selectedWallId;
         const selected = selectedSet.has(wall.id) || isPrimary;
         const [a, b]: [Point, Point] = wall.innerLine;
@@ -246,7 +254,7 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
 
         // Other walls act as endpoint-snap sources; we exclude the current
         // wall so its own endpoints don't interfere with dragging it.
-        const otherWalls = shownWalls.filter((w) => w.id !== wall.id);
+        const otherWalls = isPrimary ? shownWalls.filter((w) => w.id !== wall.id) : [];
 
         const commitWholeWallMove = (node: Konva.Node) => {
           const dx = node.x();
@@ -259,7 +267,11 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
           // Endpoint-snap the whole-wall translation to nearby corners of
           // other walls (so the moved wall lands cleanly on an existing
           // junction if the user releases near one).
-          const snappedA = snapEndpoint(newA, otherWalls, ENDPOINT_SNAP_PIXELS / scale);
+          const snapWalls =
+            otherWalls.length > 0
+              ? otherWalls
+              : shownWalls.filter((candidate) => candidate.id !== wall.id);
+          const snappedA = snapEndpoint(newA, snapWalls, ENDPOINT_SNAP_PIXELS / scale);
           const deltaAfterSnapA = { x: snappedA.x - newA.x, y: snappedA.y - newA.y };
           const finalA = snappedA;
           const finalB = { x: newB.x + deltaAfterSnapA.x, y: newB.y + deltaAfterSnapA.y };
