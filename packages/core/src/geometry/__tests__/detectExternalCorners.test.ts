@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Point, Project, Wall } from "../../types.js";
 import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
 import { tileProject } from "../../corners/tileProject.js";
-import { lShapeWalls, rectangleWalls } from "./fixtures.js";
+import { doubleContourRoomWalls, lShapeWalls, rectangleWalls } from "./fixtures.js";
 
 function projectOf(walls: Wall[]): Project {
   const pourIds = [...new Set(walls.map((wall) => wall.pourId))];
@@ -29,6 +29,19 @@ describe("automatic external K30 corners", () => {
 
     expect(layout.externalCorners).toHaveLength(4);
     expect(layout.externalCorners.every((corner) => corner.pourId === "pour-1")).toBe(true);
+  });
+
+  it("puts K30 on the drawn outer contour, not the paired inner contour", () => {
+    const layout = tileProject(projectOf(doubleContourRoomWalls())).layout;
+
+    expect(new Set(layout.externalCorners.map((corner) => key(corner.point)))).toEqual(
+      new Set([
+        "-20.000,-20.000",
+        "420.000,-20.000",
+        "420.000,320.000",
+        "-20.000,320.000",
+      ])
+    );
   });
 
   it("keeps the same result after translating and rotating the user's drawing", () => {

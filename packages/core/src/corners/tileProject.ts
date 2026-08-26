@@ -31,8 +31,10 @@ import { placeCornerPanels } from "./placeCornerPanels.js";
  *    stored in the layout instead of being seeded as fixture-only points.
  * 10: every DRAWN face gets exactly one row. A paired second contour is tiled;
  *     an undrawn face derived only from a thickness value is not.
+ * 11: outside K30 corners follow the drawn exterior face of a paired wall,
+ *     rather than the primary inner contour retained for tiling bookkeeping.
  */
-export const ENGINE_VERSION = 10;
+export const ENGINE_VERSION = 11;
 
 export interface TileProjectResult {
   placements: Placement[];
@@ -125,6 +127,17 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
   }
 
   const activeEdges = corners.edges.filter((edge) => resolution.wallByEdgeId.has(edge.id));
+  const exteriorSourceWallIds = new Set(
+    resolution.resolvedWalls.map((resolvedWall) => {
+      const drawnExteriorFace = resolvedWall.faces.find(
+        (face) => !face.isInterior && face.sourceWallId !== undefined
+      );
+      return drawnExteriorFace?.sourceWallId ?? resolvedWall.sourceWallId;
+    })
+  );
+  const exteriorEdges = corners.edges.filter((edge) =>
+    exteriorSourceWallIds.has(edge.wallId)
+  );
   const layout: ProjectLayout = {
     nodes: resolution.nodes,
     // Consumed edges are dropped: every accessory counter reads this list as
@@ -138,7 +151,7 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
       area: r.area,
     })),
     corners: resolution.corners,
-    externalCorners: detectExternalCorners(resolution.nodes, activeEdges, walls),
+    externalCorners: detectExternalCorners(resolution.nodes, exteriorEdges, walls),
     diagnostics,
     engineVersion: ENGINE_VERSION,
   };

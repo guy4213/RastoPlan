@@ -126,38 +126,31 @@ function bracketsForExternalCorners(
 ): CornerBracket[] {
   if (!layout) return [];
 
-  const nodeById = new Map(layout.nodes.map((node) => [node.id, node]));
-  const wallById = new Map(walls.map((wall) => [wall.id, wall]));
   const brackets: CornerBracket[] = [];
   const seenCorners = new Set<string>();
 
   for (const corner of corners) {
-    const node = layout.nodes.find(
-      (candidate) =>
-        Math.hypot(candidate.point.x - corner.point.x, candidate.point.y - corner.point.y) < 0.5
-    );
-    const cornerKey = node ? `${node.id}:${corner.pourId}` : "";
-    if (!node || seenCorners.has(cornerKey)) continue;
+    const cornerKey = `${corner.pourId}:${corner.point.x.toFixed(3)}:${corner.point.y.toFixed(3)}`;
+    if (seenCorners.has(cornerKey)) continue;
 
-    const incident = layout.edges.filter(
-      (edge) => edge.nodeA === node.id || edge.nodeB === node.id
-    );
-    const arms = incident
-      .map((edge) => {
-        const wall = wallById.get(edge.wallId);
-        if (!wall || wall.pourId !== corner.pourId) return null;
-        const otherId = edge.nodeA === node.id ? edge.nodeB : edge.nodeA;
-        const other = nodeById.get(otherId);
-        if (!other) return null;
-        const length = Math.hypot(
-          other.point.x - node.point.x,
-          other.point.y - node.point.y
-        );
+    // The engine may keep the inner contour as the resolved wall id while the
+    // physical outside corner belongs to its consumed, user-drawn partner.
+    // Read the arms from source wall geometry so the bracket follows the
+    // actual exterior line instead of jumping back to the bookkeeping edge.
+    const arms = walls
+      .filter((wall) => wall.pourId === corner.pourId)
+      .map((wall) => {
+        const [a, b] = wall.innerLine;
+        const atA = Math.hypot(a.x - corner.point.x, a.y - corner.point.y) < 0.5;
+        const atB = Math.hypot(b.x - corner.point.x, b.y - corner.point.y) < 0.5;
+        if (!atA && !atB) return null;
+        const other = atA ? b : a;
+        const length = Math.hypot(other.x - corner.point.x, other.y - corner.point.y);
         if (length === 0) return null;
         return {
           along: {
-            x: (other.point.x - node.point.x) / length,
-            y: (other.point.y - node.point.y) / length,
+            x: (other.x - corner.point.x) / length,
+            y: (other.y - corner.point.y) / length,
           },
         };
       })
@@ -170,8 +163,8 @@ function bracketsForExternalCorners(
     });
     const componentOffset = PLACEMENT_BAND_DEPTH_CM + CLEARANCE_CM;
     const elbow = {
-      x: node.point.x + outside.x * componentOffset * Math.SQRT2,
-      y: node.point.y + outside.y * componentOffset * Math.SQRT2,
+      x: corner.point.x + outside.x * componentOffset * Math.SQRT2,
+      y: corner.point.y + outside.y * componentOffset * Math.SQRT2,
     };
     const tip = (arm: { along: Point }) => ({
       x: elbow.x + arm.along.x * ARM_CM,
