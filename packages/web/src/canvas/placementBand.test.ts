@@ -53,20 +53,6 @@ function painted(
   };
 }
 
-function outerHull(wallId: string, walls: Wall[], placements: Placement[], layout: ProjectLayout) {
-  const wall = walls.find((item) => item.id === wallId)!;
-  const frame = resolvedWallFrame(wall, layout, walls);
-  const bands = placements
-    .filter((placement) => placement.edgeId === `edge:${wallId}` && placement.side === "faceB")
-    .map((placement) => placementBand(placement, wall, frame));
-  return {
-    x0: Math.min(...bands.map((band) => band.x0)),
-    y0: Math.min(...bands.map((band) => band.y0)),
-    x1: Math.max(...bands.map((band) => band.x1)),
-    y1: Math.max(...bands.map((band) => band.y1)),
-  };
-}
-
 function allPaintedBands(walls: Wall[], placements: Placement[], layout: ProjectLayout) {
   return placements.flatMap((placement) => {
     if (placement.kind === "corner-panel") return [];
@@ -81,45 +67,21 @@ function allPaintedBands(walls: Wall[], placements: Placement[], layout: Project
   });
 }
 
-describe("external corner — one panel owns the corner without overlapping", () => {
-  it("moves the corner-owning panel 2cm inward at all four corners", () => {
+describe("one formwork row per drawn wall", () => {
+  it("does not synthesize a second face while painting a rectangular room", () => {
     const walls = ring(0, 0, 400, 300, "w");
-    const { painted: placements, layout } = painted(walls);
-    const top = outerHull("w-0", walls, placements, layout);
-    const right = outerHull("w-1", walls, placements, layout);
-    const bottom = outerHull("w-2", walls, placements, layout);
-    const left = outerHull("w-3", walls, placements, layout);
+    const { raw, painted: placements } = painted(walls);
 
-    // At the top the vertical starts 2cm below the outside edge; at the bottom
-    // it ends 2cm above it.
-    expect(right.y0 - top.y0, "top-right offset").toBeCloseTo(GAP_CM);
-    expect(left.y0 - top.y0, "top-left offset").toBeCloseTo(GAP_CM);
-    expect(bottom.y1 - right.y1, "bottom-right offset").toBeCloseTo(GAP_CM);
-    expect(bottom.y1 - left.y1, "bottom-left offset").toBeCloseTo(GAP_CM);
-
-    // Horizontals stop at the side of the vertical band; the panels share an
-    // edge for 8cm but never share area.
-    expect(top.x0, "top-left meeting edge").toBeCloseTo(left.x1);
-    expect(bottom.x0, "bottom-left meeting edge").toBeCloseTo(left.x1);
-    expect(top.x1, "top-right meeting edge").toBeCloseTo(right.x0);
-    expect(bottom.x1, "bottom-right meeting edge").toBeCloseTo(right.x0);
-    expect(top.y1 - right.y0).toBeCloseTo(PANEL_CM - GAP_CM);
+    expect(placements).toBe(raw);
+    expect(new Set(placements.map((placement) => placement.side))).toEqual(new Set(["faceA"]));
   });
 
   it("does the same on the reported 499x390 two-contour plan", () => {
     const walls = [...ring(0, 0, 499, 390, "out"), ...ring(109.5, 95, 389.5, 295, "in")];
-    const { painted: placements, layout } = painted(walls);
-    const top = outerHull("in-0", walls, placements, layout);
-    const right = outerHull("in-1", walls, placements, layout);
-    const bottom = outerHull("in-2", walls, placements, layout);
-    const left = outerHull("in-3", walls, placements, layout);
+    const { raw, painted: placements } = painted(walls);
 
-    expect(right.y0 - top.y0).toBeCloseTo(GAP_CM);
-    expect(left.y0 - top.y0).toBeCloseTo(GAP_CM);
-    expect(bottom.y1 - right.y1).toBeCloseTo(GAP_CM);
-    expect(bottom.y1 - left.y1).toBeCloseTo(GAP_CM);
-    expect(Math.abs(top.x0 - left.x1)).toBeLessThanOrEqual(0.5);
-    expect(Math.abs(top.x1 - right.x0)).toBeLessThanOrEqual(0.5);
+    expect(placements).toBe(raw);
+    expect(new Set(placements.map((placement) => placement.side))).toEqual(new Set(["faceA"]));
   });
 
   it("does not overlap any pair of external panels", () => {
@@ -131,35 +93,21 @@ describe("external corner — one panel owns the corner without overlapping", ()
     );
   });
 
-  it("extends only canvas copies and never mutates calculated placements", () => {
+  it("does not create canvas-only extensions when no second face exists", () => {
     const walls = ring(0, 0, 400, 300, "w");
     const { raw, painted: copies } = painted(walls);
     const snapshot = raw.map(({ id, offsetAlongEdge, width }) => ({ id, offsetAlongEdge, width }));
 
-    expect(copies).not.toBe(raw);
+    expect(copies).toBe(raw);
     expect(raw.map(({ id, offsetAlongEdge, width }) => ({ id, offsetAlongEdge, width }))).toEqual(
       snapshot
     );
-
-    const changed = copies.filter((copy) => {
-      const source = raw.find((placement) => placement.id === copy.id)!;
-      return copy.offsetAlongEdge !== source.offsetAlongEdge || copy.width !== source.width;
-    });
-    expect(changed).toHaveLength(4);
-    expect(
-      changed.every((placement) => {
-        const wall = walls.find((item) => item.id === placement.wallId)!;
-        const [a, b] = wall.innerLine;
-        return Math.abs(b.y - a.y) > Math.abs(b.x - a.x);
-      })
-    ).toBe(true);
   });
 
-  it("uses the configured clearance rather than hard-coding 2cm", () => {
+  it("does not let an obsolete outer-face clearance recreate a row", () => {
     const walls = ring(0, 0, 400, 300, "w");
-    const { painted: placements, layout } = painted(walls, 6);
-    const top = outerHull("w-0", walls, placements, layout);
-    const right = outerHull("w-1", walls, placements, layout);
-    expect(right.y0 - top.y0).toBeCloseTo(6);
+    const { raw, painted: placements } = painted(walls, 6);
+    expect(placements).toBe(raw);
+    expect(placements.some((placement) => placement.side === "faceB")).toBe(false);
   });
 });

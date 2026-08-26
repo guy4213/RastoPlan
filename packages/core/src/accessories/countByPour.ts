@@ -1,4 +1,10 @@
-import type { AccessoryRules, Edge, Placement, Wall } from "../types.js";
+import type {
+  AccessoryRules,
+  Edge,
+  ExternalCorner,
+  Placement,
+  Wall,
+} from "../types.js";
 import type { AccessoryCount, CountByPour, PanelCount } from "./types.js";
 import { countPanels } from "./countPanels.js";
 import { collapsePlacementUnits } from "./units.js";
@@ -20,7 +26,8 @@ export function countAccessoriesByPour(
   placements: Placement[],
   edges: Edge[],
   walls: Wall[],
-  rules: AccessoryRules
+  rules: AccessoryRules,
+  externalCorners?: readonly ExternalCorner[]
 ): CountByPour<AccessoryCount> {
   const wallToPour = new Map(walls.map((w) => [w.id, w.pourId]));
   const wallById = new Map(walls.map((w) => [w.id, w]));
@@ -40,6 +47,17 @@ export function countAccessoriesByPour(
     if (!bucket) continue;
     if (p.kind === "corner-panel") bucket.cornerClamps += rules.cornerClampsPerCorner;
     else bucket.straightClamps += rules.clampsPerStraightJoint;
+  }
+
+  // The derived outside-corner list supersedes room-corner inference. This is
+  // deliberately replacement, not addition: otherwise a corner already found
+  // by the room engine would be counted twice when it is also confirmed.
+  if (externalCorners) {
+    for (const bucket of Object.values(byPour)) bucket.cornerClamps = 0;
+    for (const corner of externalCorners) {
+      const bucket = bucketFor(corner.pourId);
+      if (bucket) bucket.cornerClamps += rules.cornerClampsPerCorner;
+    }
   }
 
   // Dywidag + nuts per edge, with the rod length set by that wall's thickness.

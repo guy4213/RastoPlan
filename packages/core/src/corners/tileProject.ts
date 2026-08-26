@@ -2,6 +2,7 @@ import type { Placement, Project, ProjectLayout, RegionSummary } from "../types.
 import { resolveWalls } from "../contours/resolveWalls.js";
 import type { ResolveOptions } from "../contours/constants.js";
 import { tileWall } from "../tiling/tileWall.js";
+import { detectExternalCorners } from "../geometry/detectExternalCorners.js";
 import { placeCornerPanels } from "./placeCornerPanels.js";
 
 /** Bump when a change makes previously saved layouts wrong rather than merely stale. */
@@ -25,8 +26,13 @@ import { placeCornerPanels } from "./placeCornerPanels.js";
  *    the project's saved inventory.
  * 7: partial inventory is placed unit-by-unit; only missing units are flagged
  *    instead of replacing an otherwise usable wall run with one red block.
+ * 8: every resolved physical wall gets one panel row on its primary drawn
+ *    line. Its opposite/paired face still defines thickness, but is not tiled
+ *    a second time.
+ * 9: clear outside K30 corners are derived from the current wall graph and
+ *    stored in the layout instead of being seeded as fixture-only points.
  */
-export const ENGINE_VERSION = 7;
+export const ENGINE_VERSION = 9;
 
 export interface TileProjectResult {
   placements: Placement[];
@@ -43,8 +49,8 @@ export interface TileProjectResult {
  *      walls were only the far face of another wall.
  *   2. placeCornerPanels: a corner panel per room per corner, on the face that
  *      borders that room; overlap strips only on faces that border no room.
- *   3. Per resolved wall: tileWall on face A, mirrored onto face B at identical
- *      offsets for Dywidag alignment.
+ *   3. Per resolved physical wall: tile its primary drawn face exactly once.
+ *      The opposite face is retained as thickness geometry, not another row.
  *
  * Consumed walls are never tiled — that is what stops a plan traced as two
  * rectangles from producing two independent, doubled-up wall sets.
@@ -71,10 +77,13 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
     const runs = corners.runs.get(edge?.id ?? "");
     if (!edge || !runs) continue;
 
-    // Each face on its own run — see tileWall. The outer ring of a room carries
-    // more panels than the inner ring, which is what the customer's plans show.
+    // One panel row per resolved physical wall. faceA is the primary source
+    // line selected by resolveWalls (the room-facing line when two contours
+    // were drawn). faceB still drives thickness, dimensions and corner
+    // geometry, but tiling it would recreate the duplicate row reported by the
+    // customer and would make a two-contour drawing cost more than one contour.
     const faces: Placement[][] = [];
-    for (const face of resolvedWall.faces) {
+    for (const face of [resolvedWall.faces[0]]) {
       const availability = availablePanelCountsByPour?.[resolvedWall.pourId];
       const tiled = tileWall(
         edge,
@@ -113,12 +122,13 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
     );
   }
 
+  const activeEdges = corners.edges.filter((edge) => resolution.wallByEdgeId.has(edge.id));
   const layout: ProjectLayout = {
     nodes: resolution.nodes,
     // Consumed edges are dropped: every accessory counter reads this list as
     // "walls that need formwork", and a wall that was only the far face of
     // another one would otherwise be counted a second time for struts.
-    edges: corners.edges.filter((e) => resolution.wallByEdgeId.has(e.id)),
+    edges: activeEdges,
     resolvedWalls: resolution.resolvedWalls,
     regions: resolution.regions.map((r): RegionSummary => ({
       id: r.id,
@@ -126,6 +136,7 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
       area: r.area,
     })),
     corners: resolution.corners,
+    externalCorners: detectExternalCorners(resolution.nodes, activeEdges, walls),
     diagnostics,
     engineVersion: ENGINE_VERSION,
   };

@@ -92,7 +92,15 @@ describe("compute — reading the drawing back into the thickness field", () => 
 
   it("leaves a single-line wall's typed thickness alone", () => {
     const single: Wall[] = [
-      { id: "solo", pourId: "pour-1", innerLine: [{ x: 0, y: 0 }, { x: 400, y: 0 }], thickness: 33 },
+      {
+        id: "solo",
+        pourId: "pour-1",
+        innerLine: [
+          { x: 0, y: 0 },
+          { x: 400, y: 0 },
+        ],
+        thickness: 33,
+      },
     ];
     const after = run(stateWith(single), { type: "compute" });
 
@@ -222,7 +230,12 @@ describe("the pairing never lags the drawing", () => {
       {
         type: "update-wall",
         wallId: "in-bottom",
-        patch: { innerLine: [{ x: 0, y: 5 }, { x: 400, y: 5 }] },
+        patch: {
+          innerLine: [
+            { x: 0, y: 5 },
+            { x: 400, y: 5 },
+          ],
+        },
       }
     );
 
@@ -244,13 +257,23 @@ describe("the pairing never lags the drawing", () => {
     const broken = run(stateWith(twoContourRoom(10)), {
       type: "update-wall",
       wallId: "in-bottom",
-      patch: { innerLine: [{ x: 0, y: 5 }, { x: 400, y: 5 }] },
+      patch: {
+        innerLine: [
+          { x: 0, y: 5 },
+          { x: 400, y: 5 },
+        ],
+      },
     });
 
     const repaired = run(broken, {
       type: "update-wall",
       wallId: "in-bottom",
-      patch: { innerLine: [{ x: 0, y: 0 }, { x: 400, y: 0 }] },
+      patch: {
+        innerLine: [
+          { x: 0, y: 0 },
+          { x: 400, y: 0 },
+        ],
+      },
     });
 
     for (const wall of repaired.project.walls) {
@@ -269,17 +292,21 @@ describe("the pairing never lags the drawing", () => {
     );
 
     expect(wallIn(after, "in-bottom").pairedWallId).toBeUndefined();
+    expect(wallIn(after, "in-bottom").thickness).toBe(20);
+    expect(after.project.walls.filter((wall) => wall.pairedWallId)).toHaveLength(6);
   });
 
-  it("drops it when endpoints are welded", () => {
+  it("re-measures it when an endpoint is welded and the wrapping contour opens", () => {
     const after = run(
       stateWith(twoContourRoom(10)),
       { type: "compute" },
       { type: "weld-endpoints", refs: [{ wallId: "out-bottom", end: 0 }], at: { x: -12, y: -12 } }
     );
 
-    expect(wallIn(after, "out-bottom").pairedWallId).toBeUndefined();
-    expect(wallIn(after, "in-bottom").pairedWallId).toBeUndefined();
+    expect(wallIn(after, "out-bottom").pairedWallId).toBe("in-bottom");
+    expect(wallIn(after, "in-bottom").pairedWallId).toBe("out-bottom");
+    expect(wallIn(after, "in-bottom").thickness).toBeGreaterThan(10);
+    expect(wallIn(after, "out-bottom").thickness).toBe(wallIn(after, "in-bottom").thickness);
   });
 
   it("keeps it through the controlled thickness edit, which moves both sides", () => {
@@ -294,7 +321,7 @@ describe("the pairing never lags the drawing", () => {
 });
 
 describe("new wall thickness", () => {
-  it("starts unset and ignores the legacy pour default", () => {
+  it("starts with the active pour thickness and is immediately visible", () => {
     const state = stateWith([]);
     const after = run(
       state,
@@ -302,7 +329,8 @@ describe("new wall thickness", () => {
       { type: "add-wall", a: { x: 0, y: 0 }, b: { x: 400, y: 0 } }
     );
 
-    expect(after.project.walls[0]!.thicknessSet).toBe(false);
+    expect(after.project.walls[0]!.thickness).toBe(35);
+    expect(after.project.walls[0]!.thicknessSet).toBe(true);
   });
 
   it("becomes defined as soon as the user enters a thickness", () => {
@@ -322,7 +350,7 @@ describe("new wall thickness", () => {
     expect(wallIn(edited, wallId).thicknessSet).toBe(true);
   });
 
-  it("refuses compute while a newly drawn line is still unset", () => {
+  it("can compute immediately after drawing without a thickness setup step", () => {
     const drawn = run(stateWith([]), {
       type: "add-wall",
       a: { x: 0, y: 0 },
@@ -330,9 +358,8 @@ describe("new wall thickness", () => {
     });
     const after = run(drawn, { type: "compute" });
 
-    expect(after.project.layout).toBeUndefined();
-    expect(after.project.placements).toEqual([]);
-    expect(after.ui.notice).toContain("להגדיר עובי");
+    expect(after.project.layout).toBeDefined();
+    expect(after.ui.notice).toBeNull();
   });
 });
 
@@ -357,6 +384,54 @@ describe("active pour selection", () => {
     );
 
     expect(after.ui.activePourId).toBe("pour-1");
+  });
+});
+
+describe("T junctions drawn on a continuous perimeter", () => {
+  const wall = (id: string, a: Point, b: Point): Wall => ({
+    id,
+    pourId: "pour-1",
+    innerLine: [a, b],
+    thickness: 20,
+    thicknessSet: true,
+  });
+
+  const rectangle = [
+    wall("bottom", { x: 0, y: 0 }, { x: 600, y: 0 }),
+    wall("right", { x: 600, y: 0 }, { x: 600, y: 400 }),
+    wall("top", { x: 600, y: 400 }, { x: 0, y: 400 }),
+    wall("left", { x: 0, y: 400 }, { x: 0, y: 0 }),
+  ];
+
+  it("splits both long walls and computes two rooms when a partition is added", () => {
+    const drawn = run(stateWith(rectangle), {
+      type: "add-wall",
+      a: { x: 300, y: 0 },
+      b: { x: 300, y: 400 },
+    });
+    const after = run(drawn, { type: "compute" });
+
+    expect(drawn.project.walls).toHaveLength(7);
+    expect(after.project.layout?.regions.filter((region) => region.kind === "room")).toHaveLength(
+      2
+    );
+    expect(after.project.layout?.nodes.filter((node) => node.type === "T")).toHaveLength(2);
+    expect(after.project.layout?.nodes.filter((node) => node.type === "end")).toHaveLength(0);
+    expect(after.project.placements.length).toBeGreaterThan(0);
+  });
+
+  it("repairs the same natural topology when an existing project is opened", () => {
+    const opened = stateWith([
+      ...rectangle,
+      wall("partition", { x: 300, y: 0 }, { x: 300, y: 400 }),
+    ]);
+    const after = run(opened, { type: "compute" });
+
+    expect(opened.project.walls).toHaveLength(7);
+    expect(after.project.layout?.regions.filter((region) => region.kind === "room")).toHaveLength(
+      2
+    );
+    expect(after.project.layout?.nodes.filter((node) => node.type === "T")).toHaveLength(2);
   });
 });
 
@@ -416,9 +491,7 @@ describe("thickness is available before any compute", () => {
       (w) => w.id !== partnerId && w.id.startsWith(partnerId.slice(0, 4))
     );
     const meets = (p: Point) =>
-      neighbours.some((w) =>
-        w.innerLine.some((e) => Math.hypot(e.x - p.x, e.y - p.y) < 0.001)
-      );
+      neighbours.some((w) => w.innerLine.some((e) => Math.hypot(e.x - p.x, e.y - p.y) < 0.001));
     expect(meets(partner.innerLine[0]!)).toBe(true);
     expect(meets(partner.innerLine[1]!)).toBe(true);
   });
@@ -454,15 +527,22 @@ describe("thickness is available before any compute", () => {
     expect(after.project.layout?.resolvedWalls).toHaveLength(4);
   });
 
-  it("leaves a half-drawn second contour unpaired rather than guessing", () => {
-    // Three of the four outer walls placed. There is no closed far contour yet,
-    // so there is nothing to measure and nothing may be written.
+  it("shows measured thickness on every drawn segment of a half-drawn wrapping contour", () => {
+    // Three of the four outer walls are enough to measure their three matching
+    // inner walls; the missing fourth side stays independent.
     let state = stateWith(twoContourRoom(10).slice(0, 4));
     for (const wall of twoContourRoom(10).slice(4, 7)) {
       state = run(state, { type: "add-wall", a: wall.innerLine[0], b: wall.innerLine[1] });
     }
 
-    expect(state.project.walls.filter((w) => w.pairedWallId)).toHaveLength(0);
+    expect(state.project.walls.filter((w) => w.pairedWallId)).toHaveLength(6);
+    for (const id of ["in-bottom", "in-right", "in-top"]) {
+      expect(wallIn(state, id).thickness, id).toBe(10);
+      const partnerId = wallIn(state, id).pairedWallId;
+      expect(partnerId, id).toBeDefined();
+      expect(wallIn(state, partnerId!).thickness, id).toBe(10);
+    }
+    expect(wallIn(state, "in-left").pairedWallId).toBeUndefined();
   });
 
   it("does not let one pour's thickness leak into another", () => {
@@ -518,7 +598,6 @@ describe("ortho lock is a mode, not a held key", () => {
   });
 });
 
-
 describe("a plan being drawn is left alone until its contours close", () => {
   it("does not pair anything while the walls still have loose ends", () => {
     // Reported from a real session: mid-draw, walls metres apart were read as
@@ -545,36 +624,56 @@ describe("a plan being drawn is left alone until its contours close", () => {
     expect(closed.project.walls.filter((w) => w.pairedWallId)).toHaveLength(8);
   });
 
-  it("lets go again if a contour is reopened", () => {
+  it("keeps the remaining measurable sides when a contour is reopened", () => {
     const after = run(stateWith(twoContourRoom(20)), {
       type: "delete-wall",
       wallId: "out-top",
     });
 
-    for (const wall of after.project.walls) {
-      expect(wall.pairedWallId, wall.id).toBeUndefined();
-    }
+    expect(after.project.walls.filter((wall) => wall.pairedWallId)).toHaveLength(6);
+    expect(wallIn(after, "in-top").pairedWallId).toBeUndefined();
+    expect(wallIn(after, "in-top").thickness).toBe(20);
   });
 });
 
-
 describe("wall thickness validation on load", () => {
-  it("marks an out-of-range thickness as missing instead of applying a default", () => {
-    // Values beyond the editor's documented range keep an internal safe
-    // placeholder, but the user is told that no real thickness was supplied.
+  it("silently makes the stored thickness visible in projects saved with the old unset state", () => {
+    const legacyUnset: Wall[] = [
+      {
+        id: "legacy-unset",
+        pourId: "pour-1",
+        innerLine: [
+          { x: 0, y: 0 },
+          { x: 400, y: 0 },
+        ],
+        thickness: 20,
+        thicknessSet: false,
+      },
+    ];
+    const state = stateWith(legacyUnset);
+
+    expect(state.project.walls[0]!.thickness).toBe(20);
+    expect(state.project.walls[0]!.thicknessSet).toBe(true);
+    expect(state.ui.notice).toBeNull();
+  });
+
+  it("automatically replaces an out-of-range thickness with the pour default", () => {
     const corrupt: Wall[] = [
       {
         id: "corrupt",
         pourId: "pour-1",
-        innerLine: [{ x: 0, y: 0 }, { x: 400, y: 0 }],
+        innerLine: [
+          { x: 0, y: 0 },
+          { x: 400, y: 0 },
+        ],
         thickness: 301,
       },
     ];
     const state = stateWith(corrupt);
 
     expect(state.project.walls[0]!.thickness).toBe(20);
-    expect(state.project.walls[0]!.thicknessSet).toBe(false);
-    expect(state.ui.notice).toContain("ללא עובי חוקי");
+    expect(state.project.walls[0]!.thicknessSet).toBe(true);
+    expect(state.ui.notice).toContain("הוחלף אוטומטית");
   });
 
   it("leaves every thickness the field would accept exactly as it is", () => {
@@ -598,9 +697,7 @@ describe("wall thickness validation on load", () => {
   });
 
   it("repairs a non-numeric thickness rather than letting it reach the engine", () => {
-    const walls = twoContourRoom(20).map((w, i) =>
-      i === 0 ? { ...w, thickness: Number.NaN } : w
-    );
+    const walls = twoContourRoom(20).map((w, i) => (i === 0 ? { ...w, thickness: Number.NaN } : w));
 
     expect(wallIn(stateWith(walls), "in-bottom").thickness).toBe(20);
   });
@@ -731,11 +828,17 @@ describe("imported inventory", () => {
 
     const reopened = initialAppState(project);
 
-    expect(reopened.project.catalog.panels.find((panel) => panel.type === "R75")?.inStock).toBe(true);
-    expect(reopened.project.catalog.panels.find((panel) => panel.type === "R50")?.inStock).toBe(true);
+    expect(reopened.project.catalog.panels.find((panel) => panel.type === "R75")?.inStock).toBe(
+      true
+    );
+    expect(reopened.project.catalog.panels.find((panel) => panel.type === "R50")?.inStock).toBe(
+      true
+    );
     // C15 has no row in the imported sheet, so unrelated catalog choices are
     // not rewritten by the repair.
-    expect(reopened.project.catalog.panels.find((panel) => panel.type === "C15x15")?.inStock).toBe(false);
+    expect(reopened.project.catalog.panels.find((panel) => panel.type === "C15x15")?.inStock).toBe(
+      false
+    );
   });
 
   it("normalizes invalid and fractional reducer input defensively", () => {

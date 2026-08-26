@@ -20,3 +20,6 @@ export {
   unitNormal,
 } from "./polygon.js";
 export { otherWallThicknessAt } from "./neighborThickness.js";
+export { splitWallsAtJunctions } from "./splitWallsAtJunctions.js";
+export type { SplitWallsAtJunctionsResult } from "./splitWallsAtJunctions.js";
+export { detectExternalCorners } from "./detectExternalCorners.js";

@@ -56,6 +56,22 @@ describe("countAccessories — the customer's clamp formulas", () => {
     expect(count.cornerClamps).toBe(12);
   });
 
+  it("uses engine-derived outside corners instead of inferred room corners when supplied", () => {
+    const ctx = buildGraphContext(rectangleWalls());
+    const count = countAccessories(
+      ctx.placements,
+      ctx.edges,
+      ctx.walls,
+      DEFAULT_ACCESSORY_RULES,
+      [
+        { point: { x: 0, y: 0 }, pourId: "pour-1" },
+        { point: { x: 400, y: 300 }, pourId: "pour-1" },
+      ]
+    );
+
+    expect(count.cornerClamps).toBe(2 * DEFAULT_ACCESSORY_RULES.cornerClampsPerCorner);
+  });
+
   it("K10 straight clamps = (all panels − corner panels) × 3 (the sheet's =((SUM(...))-4)*3)", () => {
     const ctx = buildGraphContext(rectangleWalls());
     const count = countAccessories(ctx.placements, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
@@ -81,20 +97,29 @@ describe("countAccessories — the customer's clamp formulas", () => {
 describe("countAccessories — struts", () => {
   it("counts face A ONLY — face-B placements never inflate the strut count", () => {
     const ctx = buildGraphContext(rectangleWalls());
-
-    const outerCount = ctx.placements.filter((p) => p.side === "faceB").length;
-    expect(outerCount).toBeGreaterThan(0);
+    // The production tiler now emits one row only. Add a synthetic mirrored
+    // row here so this counter-level regression still proves that even stale
+    // legacy face-B placements cannot inflate the strut count.
+    const legacyOuter = ctx.placements.map((placement) => ({
+      ...placement,
+      id: `${placement.id}:legacy-faceB`,
+      side: "faceB" as const,
+    }));
 
     const withPlacements = countAccessories(
-      ctx.placements,
+      [...ctx.placements, ...legacyOuter],
       ctx.edges,
       ctx.walls,
       DEFAULT_ACCESSORY_RULES
     );
     // Struts read only from `edges`, not `placements` — dropping every
     // outer-face placement mustn't change the number.
-    const innerOnly = ctx.placements.filter((p) => p.side === "faceA");
-    const withoutOuter = countAccessories(innerOnly, ctx.edges, ctx.walls, DEFAULT_ACCESSORY_RULES);
+    const withoutOuter = countAccessories(
+      ctx.placements,
+      ctx.edges,
+      ctx.walls,
+      DEFAULT_ACCESSORY_RULES
+    );
     expect(withoutOuter.struts).toBe(withPlacements.struts);
   });
 

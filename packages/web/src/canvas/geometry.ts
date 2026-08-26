@@ -90,14 +90,34 @@ export function findEndpointSnapTarget(
       }
     }
   }
+  // Prefer a real endpoint whenever one is reachable. Near a corner, snapping
+  // to the adjoining segment would manufacture a tiny wall part.
+  if (best) return best.p;
+
+  // A partition normally ends on the middle of a perimeter wall. Make that
+  // point just as magnetic as a corner; the reducer then splits the wall there
+  // so the engine receives a real T node.
+  for (const wall of walls) {
+    const [a, b] = wall.innerLine;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared === 0) continue;
+    const t = ((candidate.x - a.x) * dx + (candidate.y - a.y) * dy) / lengthSquared;
+    if (t <= 0 || t >= 1) continue;
+    const projected = { x: a.x + dx * t, y: a.y + dy * t };
+    const d = Math.hypot(projected.x - candidate.x, projected.y - candidate.y);
+    if (d <= endpointSnapCm && (best === null || d < best.d)) {
+      best = { d, p: projected };
+    }
+  }
   return best ? best.p : null;
 }
 
 /**
- * Snap a candidate wall endpoint (in cm) to the nearest existing wall
- * endpoint within `endpointSnapCm` — returned verbatim so the new wall
- * shares the exact vertex coordinate. Returns the input unchanged when
- * no endpoint is in range.
+ * Snap a candidate wall endpoint (in cm) to the nearest existing wall endpoint
+ * or segment within `endpointSnapCm`. A mid-segment hit is later converted to
+ * a real T junction by splitWallsAtJunctions in the project reducer.
  *
  * Axis locking (ortho) is intentionally NOT done here — that lives in
  * `applyAxisLock` and is opt-in via the Shift key. Bundling it here made

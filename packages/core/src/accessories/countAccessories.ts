@@ -1,4 +1,4 @@
-import type { AccessoryRules, Edge, Placement, Wall } from "../types.js";
+import type { AccessoryRules, Edge, ExternalCorner, Placement, Wall } from "../types.js";
 import type { AccessoryCount } from "./types.js";
 import { collapsePlacementUnits } from "./units.js";
 import { classifyDywidagLength, dywidagRodsForJoint } from "./dywidag.js";
@@ -27,7 +27,8 @@ export function countAccessories(
   placements: Placement[],
   edges: Edge[],
   walls: Wall[],
-  rules: AccessoryRules
+  rules: AccessoryRules,
+  externalCorners?: readonly ExternalCorner[]
 ): AccessoryCount {
   const units = collapsePlacementUnits(placements).filter(
     (p) => p.panelType && !p.flags.includes("outer-corner-protrusion")
@@ -39,7 +40,9 @@ export function countAccessories(
   const totalRods = rods.standard + rods.long;
 
   return {
-    cornerClamps: cornerUnits * rules.cornerClampsPerCorner,
+    cornerClamps:
+      (externalCorners ? externalCorners.length : cornerUnits) *
+      rules.cornerClampsPerCorner,
     straightClamps: straightPanels * rules.clampsPerStraightJoint,
     dywidagRods: totalRods,
     dywidagRodsStandard: rods.standard,

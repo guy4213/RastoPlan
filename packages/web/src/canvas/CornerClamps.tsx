@@ -1,8 +1,13 @@
 import { useMemo } from "react";
 import { Group, Line, Text } from "react-konva";
-import type { AccessoryRules, Placement, Point, ProjectLayout, Wall } from "@rastoplan/core";
-import { wallNormal } from "./geometry.js";
-import { resolvedWallFrame } from "./resolvedWallFrame.js";
+import type {
+  AccessoryRules,
+  ExternalCorner,
+  Placement,
+  ProjectLayout,
+  Wall,
+} from "@rastoplan/core";
+import { computeCornerBrackets } from "./cornerClampGeometry.js";
 
 interface Props {
   walls: Wall[];
@@ -10,139 +15,27 @@ interface Props {
   layout: ProjectLayout | undefined;
   rules: AccessoryRules;
   scale: number;
+  externalCorners?: readonly ExternalCorner[];
 }
 
-interface CornerBracket {
-  key: string;
-  /** the angle's three points: end of one arm, the elbow, end of the other */
-  points: number[];
-  labelAt: Point;
-  count: number;
-}
-
-/** How far each arm of the bracket reaches along its wall. */
-const ARM_CM = 45;
-/**
- * Gap between the outer panel face and the bracket. Big enough to clear the
- * panel band (8cm) and the bracket's own stroke, so the clamp sits OUTSIDE the
- * corner rather than on top of the panels it holds.
- */
-const CLEARANCE_CM = 19;
-
-/**
- * K30 corner clamps wrap the OUTSIDE of a corner, straddling the joint where
- * the two outer panels meet — the assembly drawn in the customer's AutoCAD
- * detail. They belong nowhere near the inner corner panel, and a wall with a
- * room on both sides has no outside and gets none.
- *
- * The count still comes from the BOM; this only puts it on the drawing.
- */
-function computeBrackets(
-  walls: Wall[],
-  placements: Placement[],
-  layout: ProjectLayout | undefined,
-  clampsPerCorner: number
-): CornerBracket[] {
-  const wallById = new Map(walls.map((w) => [w.id, w]));
-
-  const legsByGroup = new Map<string, Placement[]>();
-  for (const p of placements) {
-    if (p.kind !== "corner-panel" || !p.groupId) continue;
-    legsByGroup.set(p.groupId, [...(legsByGroup.get(p.groupId) ?? []), p]);
-  }
-
-  const brackets: CornerBracket[] = [];
-  for (const [groupId, legs] of legsByGroup) {
-    // One physical corner is two legs, one per meeting wall. Their directions
-    // are what give the bracket its two arms, so a lone leg can't be drawn.
-    if (legs.length < 2) continue;
-
-    const arms: { corner: Point; along: Point; outward: Point }[] = [];
-    let exterior = true;
-
-    for (const leg of legs.slice(0, 2)) {
-      const wall = wallById.get(leg.wallId);
-      if (!wall) continue;
-      const frame = resolvedWallFrame(wall, layout);
-      if (leg.side === "faceB" ? frame.faceAIsInterior : frame.faceBIsInterior) {
-        exterior = false;
-        break;
-      }
-
-      const [a, b] = wall.innerLine;
-      const wallLength = Math.hypot(b.x - a.x, b.y - a.y);
-      if (wallLength === 0) continue;
-      // Which end of the wall this leg sits at, from where it lands along the
-      // wall rather than from the sign of its offset — the near leg starts at 0
-      // now that the straight run begins after it, not at a negative offset.
-      const atA = leg.offsetAlongEdge + leg.width / 2 < wallLength / 2;
-      const vertex = atA ? a : b;
-      const far = atA ? b : a;
-      const length = wallLength;
-
-      const n = wallNormal(wall);
-      const outward = leg.side === "faceB" ? -frame.outwardSign : frame.outwardSign;
-      // A point on this wall's outer face, pushed CLEARANCE_CM further out so
-      // the bracket runs alongside the panels instead of over them.
-      const push = frame.faceBOffsetCm + CLEARANCE_CM;
-      arms.push({
-        corner: {
-          x: vertex.x + n.x * outward * push,
-          y: vertex.y + n.y * outward * push,
-        },
-        along: { x: (far.x - vertex.x) / length, y: (far.y - vertex.y) / length },
-        outward: { x: n.x * outward, y: n.y * outward },
-      });
-    }
-
-    if (!exterior || arms.length < 2) continue;
-
-    // The outer corner is where the two walls' OUTER FACES cross, not the
-    // perpendicular offset of the shared inner vertex. Those differ whenever
-    // the two walls have different thicknesses, and averaging them dropped the
-    // bracket somewhere inside the wall instead of on the corner.
-    const elbow =
-      intersect(arms[0]!.corner, arms[0]!.along, arms[1]!.corner, arms[1]!.along) ?? arms[0]!.corner;
-    const bisector = normalize({
-      x: arms[0]!.outward.x + arms[1]!.outward.x,
-      y: arms[0]!.outward.y + arms[1]!.outward.y,
-    });
-    const tip = (arm: { along: Point }) => ({
-      x: elbow.x + arm.along.x * ARM_CM,
-      y: elbow.y + arm.along.y * ARM_CM,
-    });
-
-    const p0 = tip(arms[0]!);
-    const p2 = tip(arms[1]!);
-
-    brackets.push({
-      key: groupId,
-      points: [p0.x, p0.y, elbow.x, elbow.y, p2.x, p2.y],
-      labelAt: { x: elbow.x + bisector.x * 22, y: elbow.y + bisector.y * 22 },
-      count: Math.max(1, Math.round(clampsPerCorner)),
-    });
-  }
-
-  return brackets;
-}
-
-/** Where the infinite lines (p1 along d1) and (p2 along d2) cross. */
-function intersect(p1: Point, d1: Point, p2: Point, d2: Point): Point | null {
-  const denominator = d1.x * d2.y - d1.y * d2.x;
-  if (Math.abs(denominator) < 1e-9) return null;
-  const t = ((p2.x - p1.x) * d2.y - (p2.y - p1.y) * d2.x) / denominator;
-  return { x: p1.x + d1.x * t, y: p1.y + d1.y * t };
-}
-
-function normalize(v: Point): Point {
-  const length = Math.hypot(v.x, v.y);
-  return length === 0 ? { x: 0, y: -1 } : { x: v.x / length, y: v.y / length };
-}
-
-export function CornerClamps({ walls, placements, layout, rules, scale }: Props) {
+export function CornerClamps({
+  walls,
+  placements,
+  layout,
+  rules,
+  scale,
+  externalCorners,
+}: Props) {
   const brackets = useMemo(
-    () => computeBrackets(walls, placements, layout, rules.cornerClampsPerCorner),
-    [walls, placements, layout, rules.cornerClampsPerCorner]
+    () =>
+      computeCornerBrackets(
+        walls,
+        placements,
+        layout,
+        rules.cornerClampsPerCorner,
+        externalCorners
+      ),
+    [walls, placements, layout, rules.cornerClampsPerCorner, externalCorners]
   );
 
   return (

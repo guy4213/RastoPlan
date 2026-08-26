@@ -538,6 +538,7 @@ export function Canvas() {
             layout={layout}
             rules={rules}
             scale={view.scale}
+            externalCorners={layout?.externalCorners}
           />
           {marquee && (() => {
             const r = normalizeRect(marquee);

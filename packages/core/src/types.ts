@@ -7,6 +7,12 @@ export interface Point {
   y: number;
 }
 
+/** A physical outside corner derived for K30 clamps. */
+export interface ExternalCorner {
+  point: Point;
+  pourId: string;
+}
+
 /** A saved layout: pours, walls, and the resulting/edited panel placements. */
 export interface Project {
   /** uuid */
@@ -61,7 +67,7 @@ export interface Pour {
   color: string;
   /** display order among a project's pours */
   order: number;
-  /** @deprecated Kept only when loading older projects; new walls do not use it. */
+  /** Thickness automatically assigned to newly drawn walls in this pour. */
   defaultThicknessCm?: number;
 }
 
@@ -236,6 +242,8 @@ export interface ProjectLayout {
   resolvedWalls: ResolvedWall[];
   regions: RegionSummary[];
   corners: CornerAtNode[];
+  /** Unambiguous convex facade corners, recalculated from the current graph. */
+  externalCorners: ExternalCorner[];
   diagnostics: Diagnostic[];
   /** bump to invalidate layouts saved by an older engine */
   engineVersion: number;

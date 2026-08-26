@@ -43,7 +43,8 @@ export function QuantitiesPanel() {
       project.placements,
       project.layout.edges,
       project.walls,
-      project.rules
+      project.rules,
+      project.layout.externalCorners
     );
     return {
       accessories: applyQuantityOverrides(automatic, project.overrides).counts,

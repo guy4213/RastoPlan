@@ -8,3 +8,4 @@ export * from "./corners/index.js";
 export * from "./accessories/index.js";
 export * from "./export/index.js";
 export * from "./migrate/index.js";
+export { DEFAULT_POUR_THICKNESS_CM } from "./migrate/migrateProject.js";

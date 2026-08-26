@@ -11,10 +11,12 @@ import {
   CURRENT_SCHEMA_VERSION,
   DEFAULT_ACCESSORY_RULES,
   DEFAULT_PANEL_CATALOG,
+  DEFAULT_POUR_THICKNESS_CM,
   ENGINE_VERSION,
   migrateProject,
   previewPairingByWallId,
   retargetWallThickness,
+  splitWallsAtJunctions,
   tileProject,
 } from "@rastoplan/core";
 
@@ -66,13 +68,6 @@ function uid(prefix: string): string {
 }
 
 /**
- * Internal numeric placeholder required by the legacy engine shape while a
- * newly drawn line has no thickness yet. `thicknessSet: false` prevents it
- * from being displayed or computed; it is not a user-facing default.
- */
-const UNSET_WALL_ENGINE_PLACEHOLDER_CM = 20;
-
-/**
  * The thickest a wall the numeric field and the drag handle will accept, in cm.
  *
  * Deliberately NOT handed to the engine as a pairing ceiling. It was, briefly,
@@ -94,12 +89,22 @@ export const MAX_WALL_THICKNESS_CM = 300;
  */
 export const MIN_WALL_THICKNESS_CM = 5;
 
+function automaticThicknessFor(project: Project, pourId: string): number {
+  const configured = project.pours.find((pour) => pour.id === pourId)?.defaultThicknessCm;
+  return Number.isFinite(configured) &&
+    configured! >= MIN_WALL_THICKNESS_CM &&
+    configured! <= MAX_WALL_THICKNESS_CM
+    ? configured!
+    : DEFAULT_POUR_THICKNESS_CM;
+}
+
 export function initialProject(id: string): Project {
   const defaultPour: Pour = {
     id: uid("pour"),
     name: "יציקה 1",
     color: PALETTE[0]!,
     order: 0,
+    defaultThicknessCm: DEFAULT_POUR_THICKNESS_CM,
   };
   return {
     id,
@@ -126,8 +131,7 @@ export function initialAppState(project: Project): AppState {
       selectedWallIds: [],
       selectedPlacementId: null,
       view: { scale: 0.5, offset: { x: 100, y: 100 } },
-      layoutDirty:
-        opened.project.placements.length === 0 && opened.project.walls.length > 0,
+      layoutDirty: opened.project.placements.length === 0 && opened.project.walls.length > 0,
       units: "cm",
       notice: opened.notice,
       // Off by default, so a fresh session draws exactly as it did before the
@@ -205,8 +209,8 @@ function withInventoryEligibleCatalog(project: Project): Project {
  * wall and how far apart they are.
  *
  * Runs after every geometry change, which makes the thickness readable,
- * editable and saved the moment the second contour closes — no compute
- * required. It
+ * editable and saved as soon as a wrapping segment can be measured — no
+ * compute required. It
  * calls only the geometry half of the engine (graph, faces, regions, pairing);
  * tiling and the bill of materials stay behind the compute button.
  *
@@ -223,12 +227,9 @@ function withDerivedPairing(project: Project): Project {
     const partnerId = preview?.partnerId;
     if (!partnerId) return unpaired(wall);
 
-    // Once both contours are closed the distance between them is no longer a
-    // preview or a guess: it is the physical wall thickness. Keep that same
-    // value on both source lines immediately, so the number drawn on the
-    // canvas and the number saved in the project can never diverge. Pairing is
-    // deliberately restricted to closed contours in previewPairings, so an
-    // unfinished sketch cannot overwrite a typed thickness here.
+    // The distance between these two matching drawn faces is the physical wall
+    // thickness. Keep it on both source lines immediately, including while the
+    // wrapping contour is still open, so canvas and persistence cannot diverge.
     const thickness = preview.thicknessCm;
     const samePartner = wall.pairedWallId === partnerId;
     const sameThickness = Math.abs(wall.thickness - thickness) <= THICKNESS_SYNC_EPSILON_CM;
@@ -295,9 +296,14 @@ function withMeasuredThickness(project: Project, layout: ProjectLayout): Project
  */
 function openProject(raw: Project): { project: Project; notice: string | null } {
   const migrated = migrateProject(raw);
+  const planarized = splitWallsAtJunctions(migrated.walls);
+  const normalized = planarized.changed ? { ...migrated, walls: planarized.walls } : migrated;
 
-  const stale = !!migrated.layout && migrated.layout.engineVersion !== ENGINE_VERSION;
-  const current = stale ? withClearedLayout(migrated) : migrated;
+  const stale = !!normalized.layout && normalized.layout.engineVersion !== ENGINE_VERSION;
+  // A saved endpoint-on-segment junction used to look connected on screen but
+  // was not a graph node. Its old placements cannot survive the conversion to
+  // real T segments.
+  const current = stale || planarized.changed ? withClearedLayout(normalized) : normalized;
 
   const { project: healedProject, healed } = withHealedThickness(current);
   const project = withInventoryEligibleCatalog(withDerivedPairing(healedProject));
@@ -307,33 +313,44 @@ function openProject(raw: Project): { project: Project; notice: string | null } 
       ? healedThicknessNotice(healed)
       : stale
         ? "הפריסה חושבה בגרסה קודמת של מנוע החישוב ולכן נוקתה — יש ללחוץ חשב"
-        : null;
+        : planarized.changed
+          ? "חיבורי הקירות עודכנו לצמתי T אמיתיים — יש ללחוץ חשב"
+          : null;
 
   return { project, notice };
 }
 
 function healedThicknessNotice(count: number): string {
-  return `${count} קירות נטענו ללא עובי חוקי — יש להגדיר להם עובי לפני החישוב`;
+  return `העובי של ${count} קירות לא היה חוקי והוחלף אוטומטית בעובי ברירת המחדל`;
 }
 
 function withHealedThickness(project: Project): { project: Project; healed: number } {
   let healed = 0;
+  let changed = false;
   const walls = project.walls.map((wall) => {
     const valid =
       Number.isFinite(wall.thickness) &&
       wall.thickness >= MIN_WALL_THICKNESS_CM &&
       wall.thickness <= MAX_WALL_THICKNESS_CM;
-    if (valid) return wall;
+    if (valid) {
+      // Normalize projects saved while new walls still required a manual
+      // "set thickness" step. Their stored value is already usable, so this
+      // upgrade is silent and only makes the automatic dimension visible.
+      if (wall.thicknessSet !== false) return wall;
+      changed = true;
+      return { ...wall, thicknessSet: true };
+    }
 
     healed++;
+    changed = true;
     return {
       ...wall,
-      thickness: UNSET_WALL_ENGINE_PLACEHOLDER_CM,
-      thicknessSet: false,
+      thickness: automaticThicknessFor(project, wall.pourId),
+      thicknessSet: true,
     };
   });
 
-  return { project: healed > 0 ? { ...project, walls } : project, healed };
+  return { project: changed ? { ...project, walls } : project, healed };
 }
 
 function unpaired(wall: Wall): Wall {
@@ -348,7 +365,6 @@ function unpaired(wall: Wall): Wall {
  * what makes computing twice over an unchanged drawing a no-op.
  */
 const THICKNESS_SYNC_EPSILON_CM = 0.05;
-
 
 /**
  * The opposite-face mate of a placement — the one produced by
@@ -386,8 +402,7 @@ export function reduce(state: AppState, action: Action): AppState {
           // Off the OPENED project, not the raw blob: a layout the engine
           // check just dropped must light the banner, and the raw blob still
           // carries the placements that were dropped with it.
-          layoutDirty:
-            opened.project.placements.length === 0 && opened.project.walls.length > 0,
+          layoutDirty: opened.project.placements.length === 0 && opened.project.walls.length > 0,
           notice: opened.notice,
         },
       };
@@ -464,6 +479,7 @@ export function reduce(state: AppState, action: Action): AppState {
         name: `יציקה ${order + 1}`,
         color: PALETTE[order % PALETTE.length]!,
         order,
+        defaultThicknessCm: DEFAULT_POUR_THICKNESS_CM,
       };
       return {
         ...state,
@@ -476,7 +492,9 @@ export function reduce(state: AppState, action: Action): AppState {
         ...state,
         project: withUpdatedAt({
           ...state.project,
-          pours: state.project.pours.map((p) => (p.id === action.pourId ? { ...p, ...action.patch } : p)),
+          pours: state.project.pours.map((p) =>
+            p.id === action.pourId ? { ...p, ...action.patch } : p
+          ),
         }),
       };
     case "delete-pour": {
@@ -499,7 +517,8 @@ export function reduce(state: AppState, action: Action): AppState {
         ),
         ui: {
           ...state.ui,
-          activePourId: state.ui.activePourId === action.pourId ? fallbackPourId : state.ui.activePourId,
+          activePourId:
+            state.ui.activePourId === action.pourId ? fallbackPourId : state.ui.activePourId,
           layoutDirty: true,
         },
       };
@@ -511,15 +530,16 @@ export function reduce(state: AppState, action: Action): AppState {
         id: uid("wall"),
         pourId,
         innerLine: [action.a, action.b],
-        thickness: UNSET_WALL_ENGINE_PLACEHOLDER_CM,
-        thicknessSet: false,
+        thickness: automaticThicknessFor(state.project, pourId),
+        thicknessSet: true,
       };
+      const walls = splitWallsAtJunctions([...state.project.walls, wall]).walls;
       return {
         ...state,
         project: withUpdatedAt(
           withDerivedPairing({
             ...withClearedLayout(state.project),
-            walls: [...state.project.walls, wall],
+            walls,
           })
         ),
         ui: { ...state.ui, layoutDirty: true, selectedWallId: wall.id, selectedWallIds: [wall.id] },
@@ -556,9 +576,12 @@ export function reduce(state: AppState, action: Action): AppState {
       }
 
       if (Object.keys(rest).length > 0) {
+        const updatedWalls = project.walls.map((w) =>
+          w.id === action.wallId ? { ...w, ...rest } : w
+        );
         project = {
           ...project,
-          walls: project.walls.map((w) => (w.id === action.wallId ? { ...w, ...rest } : w)),
+          walls: rest.innerLine ? splitWallsAtJunctions(updatedWalls).walls : updatedWalls,
         };
       }
       return {
@@ -570,14 +593,33 @@ export function reduce(state: AppState, action: Action): AppState {
     case "delete-wall":
     case "delete-walls": {
       const remove = new Set(action.type === "delete-wall" ? [action.wallId] : action.wallIds);
+      const resetThicknessIds = new Set(
+        state.project.walls
+          .filter(
+            (wall) => remove.has(wall.id) && wall.pairedWallId && !remove.has(wall.pairedWallId)
+          )
+          .map((wall) => wall.pairedWallId!)
+      );
       // Clear the survivor's link here rather than waiting for the next
-      // compute: until then a thickness edit would look up a wall that is gone.
+      // compute. The measured gap belonged to both drawn faces; if one is
+      // deleted, the survivor returns to its pour's automatic thickness.
+      const survivingWalls = state.project.walls
+        .filter((wall) => !remove.has(wall.id))
+        .map((wall) =>
+          resetThicknessIds.has(wall.id)
+            ? {
+                ...unpaired(wall),
+                thickness: automaticThicknessFor(state.project, wall.pourId),
+                thicknessSet: true,
+              }
+            : wall
+        );
       return {
         ...state,
         project: withUpdatedAt(
           withDerivedPairing({
             ...withClearedLayout(state.project),
-            walls: state.project.walls.filter((w) => !remove.has(w.id)),
+            walls: survivingWalls,
             placements: [],
           })
         ),
@@ -603,24 +645,17 @@ export function reduce(state: AppState, action: Action): AppState {
         if (ends.includes(1)) line[1] = at;
         return { ...w, innerLine: line };
       });
+      const planarWalls = splitWallsAtJunctions(walls).walls;
       return {
         ...state,
-        project: withUpdatedAt(withDerivedPairing(withClearedLayout({ ...state.project, walls }))),
+        project: withUpdatedAt(
+          withDerivedPairing(withClearedLayout({ ...state.project, walls: planarWalls }))
+        ),
         ui: { ...state.ui, layoutDirty: true },
       };
     }
 
     case "compute": {
-      const unsetCount = state.project.walls.filter((wall) => wall.thicknessSet === false).length;
-      if (unsetCount > 0) {
-        return {
-          ...state,
-          ui: {
-            ...state.ui,
-            notice: `יש להגדיר עובי עבור ${unsetCount} קירות לפני החישוב`,
-          },
-        };
-      }
       const { placements, layout } = tileProject(state.project);
       return {
         ...state,
@@ -658,7 +693,8 @@ export function reduce(state: AppState, action: Action): AppState {
       // panelType, kind) but keeps its own side — that's exactly what
       // preserves Dywidag alignment across the wall.
       const twinPatch: Partial<Placement> = { source: "manual" };
-      if (action.patch.offsetAlongEdge !== undefined) twinPatch.offsetAlongEdge = action.patch.offsetAlongEdge;
+      if (action.patch.offsetAlongEdge !== undefined)
+        twinPatch.offsetAlongEdge = action.patch.offsetAlongEdge;
       if (action.patch.width !== undefined) twinPatch.width = action.patch.width;
       if (action.patch.panelType !== undefined) twinPatch.panelType = action.patch.panelType;
       if (action.patch.kind !== undefined) twinPatch.kind = action.patch.kind;

@@ -33,6 +33,26 @@ describe("countAccessoriesByPour — single-pour project", () => {
 });
 
 describe("countAccessoriesByPour — two-pour project", () => {
+  it("attributes derived outside-corner clamps to their pour without adding inferred corners", () => {
+    const { walls, pours } = twoPourWalls();
+    const { placements, layout } = tileProject(projectOf(walls, pours));
+    const byPour = countAccessoriesByPour(
+      placements,
+      layout.edges,
+      walls,
+      DEFAULT_ACCESSORY_RULES,
+      [
+        { point: { x: 0, y: 0 }, pourId: "pour-A" },
+        { point: { x: 1, y: 1 }, pourId: "pour-A" },
+        { point: { x: 2, y: 2 }, pourId: "pour-B" },
+      ]
+    );
+
+    expect(byPour.byPour["pour-A"]?.cornerClamps).toBe(6);
+    expect(byPour.byPour["pour-B"]?.cornerClamps).toBe(3);
+    expect(byPour.total.cornerClamps).toBe(9);
+  });
+
   it("each pour carries its own struts (sum matches project total)", () => {
     const { walls, pours } = twoPourWalls();
     const { placements, layout } = tileProject(projectOf(walls, pours));

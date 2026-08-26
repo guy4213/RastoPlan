@@ -94,10 +94,10 @@ describe("two pours — nothing doubled, nothing dropped", () => {
     expect(layout.edges).toHaveLength(8);
   });
 
-  it("gives every resolved wall formwork on both of its faces", () => {
+  it("gives every resolved wall exactly one formwork row", () => {
     for (const wall of layout.resolvedWalls) {
       const sides = new Set(placements.filter((p) => p.wallId === wall.id).map((p) => p.side));
-      expect([...sides].sort(), wall.id).toEqual(["faceA", "faceB"]);
+      expect([...sides].sort(), wall.id).toEqual(["faceA"]);
     }
   });
 

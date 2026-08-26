@@ -134,14 +134,13 @@ describe("tileProject — a hand-drawn plan is never perfectly orthogonal", () =
 });
 
 describe("tileProject — a partition between two rooms", () => {
-  it("tiles both faces as interior and puts no overlap strip on it", () => {
+  it("tiles its drawn line once even though the wall borders two rooms", () => {
     const { placements } = tileProject(projectOf(roomWithInteriorWallWalls()));
     const partition = placements.filter((p) => p.wallId === "partition");
 
     expect(partition.length).toBeGreaterThan(0);
     expect(partition.every((p) => p.faceIsInterior)).toBe(true);
-    expect(partition.some((p) => p.side === "faceA")).toBe(true);
-    expect(partition.some((p) => p.side === "faceB")).toBe(true);
+    expect(new Set(partition.map((p) => p.side))).toEqual(new Set(["faceA"]));
     expect(partition.some((p) => p.flags.includes("outer-corner-protrusion"))).toBe(false);
   });
 
@@ -150,7 +149,7 @@ describe("tileProject — a partition between two rooms", () => {
   });
 });
 
-describe("tileProject — each face covers its own run", () => {
+describe("tileProject — each drawn wall covers its run exactly once", () => {
   /** Panels butt end to end with no hole and no overlap across the whole run. */
   function assertContiguous(placements: Placement[], edgeId: string, side: PlacementSide) {
     const run = placements
@@ -168,30 +167,24 @@ describe("tileProject — each face covers its own run", () => {
     return run;
   }
 
-  it("tiles the outer ring over its full length, not just the inner ring's length", () => {
+  it("tiles the drawn ring contiguously and emits nothing on the derived thickness face", () => {
     const placements = tile(rectangleWalls());
 
     for (const wallId of ["bottom", "right", "top", "left"]) {
-      const inner = assertContiguous(placements, `edge:${wallId}`, "faceA");
-      const outer = assertContiguous(placements, `edge:${wallId}`, "faceB");
-
-      const span = (run: Placement[]) =>
-        run[run.length - 1]!.offsetAlongEdge + run[run.length - 1]!.width - run[0]!.offsetAlongEdge;
-
-      // Inner: L - 30 - 30, the two corner-panel legs.
-      // Outer: L + 20 + 20 wrapping to each outer corner, then the joint at
-      // both ends — a panel thickness on the flatter walls, that less the
-      // clearance on the steeper ones. 60 + 40 + 2x10 or 2x8.
-      expect(span(outer)).toBe(span(inner) + 100);
-      expect(outer[0]!.offsetAlongEdge).toBe(-20);
+      assertContiguous(placements, `edge:${wallId}`, "faceA");
+      expect(
+        placements.filter((p) => p.edgeId === `edge:${wallId}` && p.side === "faceB")
+      ).toHaveLength(0);
     }
   });
 
-  it("covers the outer ring on the two-contour drawing as well", () => {
+  it("keeps a paired two-contour wall to one primary row too", () => {
     const placements = tile(doubleContourRoomWalls());
     for (const wallId of ["in-bottom", "in-right", "in-top", "in-left"]) {
       assertContiguous(placements, `edge:${wallId}`, "faceA");
-      assertContiguous(placements, `edge:${wallId}`, "faceB");
+      expect(
+        placements.filter((p) => p.edgeId === `edge:${wallId}` && p.side === "faceB")
+      ).toHaveLength(0);
     }
   });
 
@@ -238,7 +231,9 @@ describe("tileProject — each face covers its own run", () => {
 
     for (const wallId of ["bottom", "right", "top", "left"]) {
       assertContiguous(placements, `edge:${wallId}`, "faceA");
-      assertContiguous(placements, `edge:${wallId}`, "faceB");
+      expect(
+        placements.filter((p) => p.edgeId === `edge:${wallId}` && p.side === "faceB")
+      ).toHaveLength(0);
     }
     for (const p of placements) {
       expect(p.flags.filter((f) => f !== "outer-corner-protrusion")).toHaveLength(0);
@@ -259,7 +254,7 @@ describe("tileProject — corners", () => {
     expect(cornerLegs.every((p) => p.width === 30)).toBe(true);
   });
 
-  it("stores the outer runs at the face intersection for visual lapping", () => {
+  it("keeps the derived outer face in geometry without emitting a second row", () => {
     const { layout } = tileProject(projectOf(rectangleWalls()));
     const placements = tile(rectangleWalls());
     const outerOf = (wallId: string) =>
@@ -267,13 +262,9 @@ describe("tileProject — corners", () => {
         .filter((p) => p.edgeId === `edge:${wallId}` && p.side === "faceB")
         .sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
 
-    // `bottom` is the flatter wall, so it carries a full panel thickness past
-    // right's outer face (400+20+10) and covers the corner square outright.
-    // `right` rides up over it, stopping the clearance short (-20-10+2).
-    const bottom = outerOf("bottom");
-    const last = bottom[bottom.length - 1]!;
-    expect(last.offsetAlongEdge + last.width).toBe(420);
-    expect(outerOf("right")[0]!.offsetAlongEdge).toBe(-20);
+    expect(outerOf("bottom")).toHaveLength(0);
+    expect(outerOf("right")).toHaveLength(0);
+    expect(layout.resolvedWalls.every((wall) => wall.faces[1].sourceWallId === undefined)).toBe(true);
     expect(layout.resolvedWalls).toHaveLength(4);
   });
 });
@@ -303,10 +294,10 @@ describe("tileProject — full pipeline coherence", () => {
     }
   });
 
-  it("returns both faces, each with panels", () => {
+  it("returns exactly one panel side per resolved wall", () => {
     const placements = tile(rectangleWalls());
     expect(placements.some((p) => p.side === "faceA")).toBe(true);
-    expect(placements.some((p) => p.side === "faceB")).toBe(true);
+    expect(placements.some((p) => p.side === "faceB")).toBe(false);
   });
 
   it("returns a layout describing what it decided", () => {

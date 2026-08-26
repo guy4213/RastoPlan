@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Wall } from "@rastoplan/core";
 import {
   applyAxisLock,
+  findEndpointSnapTarget,
   labelSideByWallId,
   panelOverlapRects,
   thicknessFromPointer,
@@ -25,6 +26,25 @@ describe("applyAxisLock", () => {
 
   it("locks relative to the segment's own start, not the origin", () => {
     expect(applyAxisLock({ x: 200, y: 300 }, { x: 260, y: 305 }, true)).toEqual({ x: 260, y: 300 });
+  });
+});
+
+describe("wall snapping", () => {
+  const wall: Wall = {
+    id: "through",
+    pourId: "pour-1",
+    innerLine: [{ x: 0, y: 0 }, { x: 400, y: 0 }],
+    thickness: 20,
+  };
+
+  it("snaps a partition endpoint to the middle of an existing wall", () => {
+    const target = findEndpointSnapTarget({ x: 201, y: 8 }, [wall], 10)!;
+    expect(target.x).toBeCloseTo(201);
+    expect(target.y).toBeCloseTo(0);
+  });
+
+  it("prefers the real corner over a nearby point on the segment", () => {
+    expect(findEndpointSnapTarget({ x: 3, y: 2 }, [wall], 10)).toEqual({ x: 0, y: 0 });
   });
 });
 
