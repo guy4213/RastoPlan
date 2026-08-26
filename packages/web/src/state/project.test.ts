@@ -321,7 +321,7 @@ describe("the pairing never lags the drawing", () => {
 });
 
 describe("new wall thickness", () => {
-  it("starts unset and ignores the legacy pour default", () => {
+  it("starts defined at the 20cm default", () => {
     const state = stateWith([]);
     const after = run(
       state,
@@ -330,7 +330,7 @@ describe("new wall thickness", () => {
     );
 
     expect(after.project.walls[0]!.thickness).toBe(20);
-    expect(after.project.walls[0]!.thicknessSet).toBe(false);
+    expect(after.project.walls[0]!.thicknessSet).toBe(true);
   });
 
   it("becomes defined as soon as the user enters a thickness", () => {
@@ -350,7 +350,7 @@ describe("new wall thickness", () => {
     expect(wallIn(edited, wallId).thicknessSet).toBe(true);
   });
 
-  it("blocks calculation until the user defines the thickness during drawing", () => {
+  it("calculates immediately with the default thickness", () => {
     const drawn = run(stateWith([]), {
       type: "add-wall",
       a: { x: 0, y: 0 },
@@ -358,8 +358,8 @@ describe("new wall thickness", () => {
     });
     const after = run(drawn, { type: "compute" });
 
-    expect(after.project.layout).toBeUndefined();
-    expect(after.ui.notice).toContain("יש להגדיר עובי");
+    expect(after.project.layout).toBeDefined();
+    expect(after.ui.notice).toBeNull();
   });
 });
 
@@ -642,7 +642,7 @@ describe("a plan being drawn is left alone until its contours close", () => {
 });
 
 describe("wall thickness validation on load", () => {
-  it("preserves an explicitly unset thickness until the user defines it", () => {
+  it("upgrades an explicitly unset thickness to the 20cm default", () => {
     const legacyUnset: Wall[] = [
       {
         id: "legacy-unset",
@@ -658,11 +658,11 @@ describe("wall thickness validation on load", () => {
     const state = stateWith(legacyUnset);
 
     expect(state.project.walls[0]!.thickness).toBe(20);
-    expect(state.project.walls[0]!.thicknessSet).toBe(false);
+    expect(state.project.walls[0]!.thicknessSet).toBe(true);
     expect(state.ui.notice).toBeNull();
   });
 
-  it("marks an out-of-range thickness as unset instead of applying a default", () => {
+  it("repairs an out-of-range thickness with the 20cm default", () => {
     const corrupt: Wall[] = [
       {
         id: "corrupt",
@@ -677,8 +677,8 @@ describe("wall thickness validation on load", () => {
     const state = stateWith(corrupt);
 
     expect(state.project.walls[0]!.thickness).toBe(20);
-    expect(state.project.walls[0]!.thicknessSet).toBe(false);
-    expect(state.ui.notice).toContain("ללא עובי חוקי");
+    expect(state.project.walls[0]!.thicknessSet).toBe(true);
+    expect(state.ui.notice).toBeNull();
   });
 
   it("leaves every thickness the field would accept exactly as it is", () => {

@@ -11,6 +11,7 @@ import {
   CURRENT_SCHEMA_VERSION,
   DEFAULT_ACCESSORY_RULES,
   DEFAULT_PANEL_CATALOG,
+  DEFAULT_POUR_THICKNESS_CM,
   ENGINE_VERSION,
   migrateProject,
   previewPairingByWallId,
@@ -67,13 +68,6 @@ function uid(prefix: string): string {
 }
 
 /**
- * Safe internal value required by the engine's numeric wall shape while a new
- * line has no user-defined thickness. `thicknessSet: false` keeps it hidden
- * and prevents calculation; this is not a visible/default wall thickness.
- */
-const UNSET_WALL_ENGINE_PLACEHOLDER_CM = 20;
-
-/**
  * The thickest a wall the numeric field and the drag handle will accept, in cm.
  *
  * Deliberately NOT handed to the engine as a pairing ceiling. It was, briefly,
@@ -101,6 +95,7 @@ export function initialProject(id: string): Project {
     name: "יציקה 1",
     color: PALETTE[0]!,
     order: 0,
+    defaultThicknessCm: DEFAULT_POUR_THICKNESS_CM,
   };
   return {
     id,
@@ -301,23 +296,17 @@ function openProject(raw: Project): { project: Project; notice: string | null } 
   // real T segments.
   const current = stale || planarized.changed ? withClearedLayout(normalized) : normalized;
 
-  const { project: healedProject, healed } = withHealedThickness(current);
+  const { project: healedProject } = withHealedThickness(current);
   const project = withInventoryEligibleCatalog(withDerivedPairing(healedProject));
 
   const notice =
-    healed > 0
-      ? healedThicknessNotice(healed)
-      : stale
+    stale
         ? "הפריסה חושבה בגרסה קודמת של מנוע החישוב ולכן נוקתה — יש ללחוץ חשב"
         : planarized.changed
           ? "חיבורי הקירות עודכנו לצמתי T אמיתיים — יש ללחוץ חשב"
           : null;
 
   return { project, notice };
-}
-
-function healedThicknessNotice(count: number): string {
-  return `${count} קירות נטענו ללא עובי חוקי — יש להגדיר להם עובי לפני החישוב`;
 }
 
 function withHealedThickness(project: Project): { project: Project; healed: number } {
@@ -327,13 +316,13 @@ function withHealedThickness(project: Project): { project: Project; healed: numb
       Number.isFinite(wall.thickness) &&
       wall.thickness >= MIN_WALL_THICKNESS_CM &&
       wall.thickness <= MAX_WALL_THICKNESS_CM;
-    if (valid) return wall;
+    if (valid && wall.thicknessSet !== false) return wall;
 
     healed++;
     return {
       ...wall,
-      thickness: UNSET_WALL_ENGINE_PLACEHOLDER_CM,
-      thicknessSet: false,
+      thickness: DEFAULT_POUR_THICKNESS_CM,
+      thicknessSet: true,
     };
   });
 
@@ -466,6 +455,7 @@ export function reduce(state: AppState, action: Action): AppState {
         name: `יציקה ${order + 1}`,
         color: PALETTE[order % PALETTE.length]!,
         order,
+        defaultThicknessCm: DEFAULT_POUR_THICKNESS_CM,
       };
       return {
         ...state,
@@ -516,8 +506,8 @@ export function reduce(state: AppState, action: Action): AppState {
         id: uid("wall"),
         pourId,
         innerLine: [action.a, action.b],
-        thickness: UNSET_WALL_ENGINE_PLACEHOLDER_CM,
-        thicknessSet: false,
+        thickness: DEFAULT_POUR_THICKNESS_CM,
+        thicknessSet: true,
       };
       const walls = splitWallsAtJunctions([...state.project.walls, wall]).walls;
       return {
@@ -588,15 +578,15 @@ export function reduce(state: AppState, action: Action): AppState {
       );
       // Clear the survivor's link here rather than waiting for the next
       // compute. The measured gap belonged to both drawn faces; if one is
-      // deleted, the survivor returns to an unset thickness.
+      // deleted, the survivor returns to the 20cm wall default.
       const survivingWalls = state.project.walls
         .filter((wall) => !remove.has(wall.id))
         .map((wall) =>
           resetThicknessIds.has(wall.id)
             ? {
                 ...unpaired(wall),
-                thickness: UNSET_WALL_ENGINE_PLACEHOLDER_CM,
-                thicknessSet: false,
+                thickness: DEFAULT_POUR_THICKNESS_CM,
+                thicknessSet: true,
               }
             : wall
         );
