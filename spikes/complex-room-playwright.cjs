@@ -6,6 +6,8 @@ const baseUrl = process.env.RASTOPLAN_URL ?? "http://127.0.0.1:4173";
 const cliArgs = process.argv.slice(2);
 const scenarioName = cliArgs.includes("simple")
   ? "simple"
+  : cliArgs.includes("double-contour")
+    ? "double-contour"
   : cliArgs.includes("reference")
     ? "reference"
     : cliArgs.includes("two-pours")
@@ -33,6 +35,21 @@ const simpleWalls = [
   wall("top", { x: 600, y: 400 }, { x: 0, y: 400 }),
   wall("left", { x: 0, y: 400 }, { x: 0, y: 0 }),
   wall("partition", { x: 300, y: 0 }, { x: 300, y: 400 }),
+];
+
+const rectangularRing = (prefix, x0, y0, x1, y1) => [
+  wall(`${prefix}-top`, { x: x0, y: y0 }, { x: x1, y: y0 }),
+  wall(`${prefix}-right`, { x: x1, y: y0 }, { x: x1, y: y1 }),
+  wall(`${prefix}-bottom`, { x: x1, y: y1 }, { x: x0, y: y1 }),
+  wall(`${prefix}-left`, { x: x0, y: y1 }, { x: x0, y: y0 }),
+];
+
+// Regression copied from the customer's screenshot: two genuinely drawn
+// contours, with a different measured gap on each side. Both contours must be
+// tiled exactly once; neither may disappear as a consumed-only helper line.
+const doubleContourWalls = [
+  ...rectangularRing("outer", 0, 0, 1692, 1288),
+  ...rectangularRing("inner", 319, 385, 1210, 1001),
 ];
 
 // A compact regression model of image.png: an orthogonal outline with several
@@ -169,6 +186,8 @@ const grayReferenceWalls = graySourceSegments.map(([a, b], index) =>
 );
 const walls = scenarioName === "simple"
   ? simpleWalls
+  : scenarioName === "double-contour"
+    ? doubleContourWalls
   : scenarioName === "reference"
     ? referenceWalls
     : scenarioName === "two-pours"
@@ -292,10 +311,18 @@ async function readProject(page) {
       project.layout.nodes.filter((node) => node.type === type).length,
     ])
   );
-  const placedEdgeIds = new Set(project.placements.map((placement) => placement.edgeId));
-  const untiledWallIds = project.walls
-    .filter((wall) => !placedEdgeIds.has(`edge:${wall.id}`))
-    .map((wall) => wall.id);
+  const untiledWallIds = project.layout.resolvedWalls.flatMap((resolvedWall) =>
+    resolvedWall.faces
+      .filter((face) => face.id === "faceA" || face.sourceWallId)
+      .filter(
+        (face) =>
+          !project.placements.some(
+            (placement) =>
+              placement.wallId === resolvedWall.id && placement.side === face.id
+          )
+      )
+      .map((face) => face.sourceWallId ?? resolvedWall.sourceWallId)
+  );
   const duplicateFaceWallIds = project.layout.resolvedWalls
     .filter((wall) => {
       const sides = new Set(
@@ -303,7 +330,11 @@ async function readProject(page) {
           .filter((placement) => placement.wallId === wall.id)
           .map((placement) => placement.side)
       );
-      return sides.size !== 1 || !sides.has("faceA");
+      const expectedSides = wall.faces
+        .filter((face) => face.id === "faceA" || face.sourceWallId)
+        .map((face) => face.id)
+        .sort();
+      return JSON.stringify([...sides].sort()) !== JSON.stringify(expectedSides);
     })
     .map((wall) => wall.id);
   const result = {
@@ -381,6 +412,17 @@ async function readProject(page) {
       if (result.wallsByPour[pour.id] === 0 || result.placementsByPour[pour.id] === 0) {
         throw new Error(`pour ${pour.id} was not fully created and tiled`);
       }
+    }
+  }
+  if (scenarioName === "double-contour") {
+    if (project.layout.resolvedWalls.length !== 4) {
+      throw new Error(
+        `resolved walls: expected 4, received ${project.layout.resolvedWalls.length}`
+      );
+    }
+    const sides = new Set(project.placements.map((placement) => placement.side));
+    if (!sides.has("faceA") || !sides.has("faceB")) {
+      throw new Error(`both drawn contours were not tiled: ${[...sides].join(", ")}`);
     }
   }
   if (keepOpenMs > 0) {

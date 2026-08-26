@@ -76,12 +76,17 @@ describe("one formwork row per drawn wall", () => {
     expect(new Set(placements.map((placement) => placement.side))).toEqual(new Set(["faceA"]));
   });
 
-  it("does the same on the reported 499x390 two-contour plan", () => {
+  it("keeps one row on each drawn contour of the reported 499x390 plan", () => {
     const walls = [...ring(0, 0, 499, 390, "out"), ...ring(109.5, 95, 389.5, 295, "in")];
     const { raw, painted: placements } = painted(walls);
 
-    expect(placements).toBe(raw);
-    expect(new Set(placements.map((placement) => placement.side))).toEqual(new Set(["faceA"]));
+    expect(placements).toHaveLength(raw.length);
+    expect(placements.map((placement) => placement.id)).toEqual(
+      raw.map((placement) => placement.id)
+    );
+    expect(new Set(placements.map((placement) => placement.side))).toEqual(
+      new Set(["faceA", "faceB"])
+    );
   });
 
   it("does not overlap any pair of external panels", () => {

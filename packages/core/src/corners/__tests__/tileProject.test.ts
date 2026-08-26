@@ -38,12 +38,24 @@ function tile(walls: Wall[]): Placement[] {
 }
 
 describe("tileProject — the customer's two-contour drawing", () => {
-  it("produces exactly the same panels as the same room drawn as one contour", () => {
-    const twoContours = countPanels(tile(doubleContourRoomWalls()));
-    const oneContour = countPanels(tile(rectangleWalls()));
+  it("tiles each drawn contour once, while a single drawn contour stays one row", () => {
+    const twoContours = tile(doubleContourRoomWalls());
+    const oneContour = tile(rectangleWalls());
 
-    expect(twoContours.byType).toEqual(oneContour.byType);
-    expect(twoContours.timberPieces).toBe(oneContour.timberPieces);
+    expect(new Set(twoContours.map((placement) => placement.side))).toEqual(
+      new Set(["faceA", "faceB"])
+    );
+    expect(new Set(oneContour.map((placement) => placement.side))).toEqual(new Set(["faceA"]));
+
+    const footprints = twoContours.map((placement) =>
+      [
+        placement.edgeId,
+        placement.side,
+        placement.offsetAlongEdge.toFixed(2),
+        placement.width.toFixed(2),
+      ].join("|")
+    );
+    expect(new Set(footprints).size).toBe(footprints.length);
   });
 
   it("never places anything on a wall that was only the far face of another", () => {
@@ -57,7 +69,7 @@ describe("tileProject — the customer's two-contour drawing", () => {
     }
   });
 
-  it("counts every accessory the same as the one-contour room, struts included", () => {
+  it("adds panel clamps for the second drawn face without duplicating wall-level accessories", () => {
     const two = projectOf(doubleContourRoomWalls());
     const one = projectOf(rectangleWalls());
     const twoResult = tileProject(two);
@@ -66,9 +78,15 @@ describe("tileProject — the customer's two-contour drawing", () => {
     const count = (r: typeof twoResult, p: Project) =>
       countAccessories(r.placements, r.layout.edges, p.walls, DEFAULT_ACCESSORY_RULES);
 
-    // Struts are counted per edge, so a consumed outer-contour wall left in the
-    // layout would silently inflate them even though the panels came out right.
-    expect(count(twoResult, two)).toEqual(count(oneResult, one));
+    const twoCount = count(twoResult, two);
+    const oneCount = count(oneResult, one);
+
+    expect(twoCount.straightClamps).toBeGreaterThan(oneCount.straightClamps);
+    expect(twoCount.cornerClamps).toBe(oneCount.cornerClamps);
+    expect(twoCount.dywidagRods).toBe(oneCount.dywidagRods);
+    expect(twoCount.nuts).toBe(oneCount.nuts);
+    expect(twoCount.struts).toBe(oneCount.struts);
+    // Consumed contour edges still stay out of the wall-level counters.
     expect(twoResult.layout.edges).toHaveLength(4);
   });
 
@@ -178,13 +196,11 @@ describe("tileProject — each drawn wall covers its run exactly once", () => {
     }
   });
 
-  it("keeps a paired two-contour wall to one primary row too", () => {
+  it("gives a paired two-contour wall one row on each drawn face", () => {
     const placements = tile(doubleContourRoomWalls());
     for (const wallId of ["in-bottom", "in-right", "in-top", "in-left"]) {
       assertContiguous(placements, `edge:${wallId}`, "faceA");
-      expect(
-        placements.filter((p) => p.edgeId === `edge:${wallId}` && p.side === "faceB")
-      ).toHaveLength(0);
+      assertContiguous(placements, `edge:${wallId}`, "faceB");
     }
   });
 

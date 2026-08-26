@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Placement, Point, Pour, Project, Wall } from "../../types.js";
 import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
-import { countAccessories } from "../../accessories/countAccessories.js";
 import { countPanels } from "../../accessories/countPanels.js";
 import {
   doubleContourRoomWallsAt,
@@ -71,26 +70,19 @@ describe("wall thickness — the two contours are one wall at any thickness", ()
   });
 
   it.each(THICKNESSES)(
-    "bills a %icm two-contour room exactly like the same room drawn as one line",
+    "tiles both actually drawn faces of a %icm two-contour room exactly once",
     (thickness) => {
       const twoContours = tile(doubleContourRoomWallsAt(thickness));
       const oneContour = tile(rectangleWallsAt(thickness));
 
-      expect(countPanels(twoContours).byType).toEqual(countPanels(oneContour).byType);
-      expect(countPanels(twoContours).timberPieces).toBe(
-        countPanels(oneContour).timberPieces
+      expect(new Set(twoContours.map((placement) => placement.side))).toEqual(
+        new Set(["faceA", "faceB"])
       );
-
-      const accessoriesOf = (walls: Wall[]) => {
-        const project = projectOf(walls);
-        const { layout, placements } = tileProject(project);
-        return countAccessories(placements, layout.edges, walls, project.rules);
-      };
-
-      // Panels, clamps, rods and struts all have to match: the doubling bug
-      // showed up in every one of them, not just in the panel count.
-      expect(accessoriesOf(doubleContourRoomWallsAt(thickness))).toEqual(
-        accessoriesOf(rectangleWallsAt(thickness))
+      expect(new Set(oneContour.map((placement) => placement.side))).toEqual(new Set(["faceA"]));
+      expect(
+        Object.values(countPanels(twoContours).byType).reduce((sum, count) => sum + count, 0)
+      ).toBeGreaterThan(
+        Object.values(countPanels(oneContour).byType).reduce((sum, count) => sum + count, 0)
       );
     }
   );

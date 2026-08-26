@@ -321,7 +321,7 @@ describe("the pairing never lags the drawing", () => {
 });
 
 describe("new wall thickness", () => {
-  it("starts with the active pour thickness and is immediately visible", () => {
+  it("starts unset and ignores the legacy pour default", () => {
     const state = stateWith([]);
     const after = run(
       state,
@@ -329,8 +329,8 @@ describe("new wall thickness", () => {
       { type: "add-wall", a: { x: 0, y: 0 }, b: { x: 400, y: 0 } }
     );
 
-    expect(after.project.walls[0]!.thickness).toBe(35);
-    expect(after.project.walls[0]!.thicknessSet).toBe(true);
+    expect(after.project.walls[0]!.thickness).toBe(20);
+    expect(after.project.walls[0]!.thicknessSet).toBe(false);
   });
 
   it("becomes defined as soon as the user enters a thickness", () => {
@@ -350,7 +350,7 @@ describe("new wall thickness", () => {
     expect(wallIn(edited, wallId).thicknessSet).toBe(true);
   });
 
-  it("can compute immediately after drawing without a thickness setup step", () => {
+  it("blocks calculation until the user defines the thickness during drawing", () => {
     const drawn = run(stateWith([]), {
       type: "add-wall",
       a: { x: 0, y: 0 },
@@ -358,8 +358,8 @@ describe("new wall thickness", () => {
     });
     const after = run(drawn, { type: "compute" });
 
-    expect(after.project.layout).toBeDefined();
-    expect(after.ui.notice).toBeNull();
+    expect(after.project.layout).toBeUndefined();
+    expect(after.ui.notice).toContain("יש להגדיר עובי");
   });
 });
 
@@ -409,7 +409,12 @@ describe("T junctions drawn on a continuous perimeter", () => {
       a: { x: 300, y: 0 },
       b: { x: 300, y: 400 },
     });
-    const after = run(drawn, { type: "compute" });
+    const defined = run(drawn, {
+      type: "update-wall",
+      wallId: drawn.ui.selectedWallId!,
+      patch: { thickness: 20 },
+    });
+    const after = run(defined, { type: "compute" });
 
     expect(drawn.project.walls).toHaveLength(7);
     expect(after.project.layout?.regions.filter((region) => region.kind === "room")).toHaveLength(
@@ -637,7 +642,7 @@ describe("a plan being drawn is left alone until its contours close", () => {
 });
 
 describe("wall thickness validation on load", () => {
-  it("silently makes the stored thickness visible in projects saved with the old unset state", () => {
+  it("preserves an explicitly unset thickness until the user defines it", () => {
     const legacyUnset: Wall[] = [
       {
         id: "legacy-unset",
@@ -653,11 +658,11 @@ describe("wall thickness validation on load", () => {
     const state = stateWith(legacyUnset);
 
     expect(state.project.walls[0]!.thickness).toBe(20);
-    expect(state.project.walls[0]!.thicknessSet).toBe(true);
+    expect(state.project.walls[0]!.thicknessSet).toBe(false);
     expect(state.ui.notice).toBeNull();
   });
 
-  it("automatically replaces an out-of-range thickness with the pour default", () => {
+  it("marks an out-of-range thickness as unset instead of applying a default", () => {
     const corrupt: Wall[] = [
       {
         id: "corrupt",
@@ -672,8 +677,8 @@ describe("wall thickness validation on load", () => {
     const state = stateWith(corrupt);
 
     expect(state.project.walls[0]!.thickness).toBe(20);
-    expect(state.project.walls[0]!.thicknessSet).toBe(true);
-    expect(state.ui.notice).toContain("הוחלף אוטומטית");
+    expect(state.project.walls[0]!.thicknessSet).toBe(false);
+    expect(state.ui.notice).toContain("ללא עובי חוקי");
   });
 
   it("leaves every thickness the field would accept exactly as it is", () => {

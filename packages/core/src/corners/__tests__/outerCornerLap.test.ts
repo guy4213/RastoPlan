@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { AccessoryRules, Pour, Project, Wall } from "../../types.js";
 import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
-import { countPanels } from "../../accessories/countPanels.js";
 import {
   doubleContourRoomWallsAt,
   lShapeWalls,
   rectangleWalls,
-  rectangleWallsAt,
 } from "../../geometry/__tests__/fixtures.js";
 import { resolveWalls } from "../../contours/resolveWalls.js";
 import { placeCornerPanels } from "../placeCornerPanels.js";
@@ -129,19 +127,25 @@ describe("outer corner lap — steeper wall rides over flatter", () => {
   });
 });
 
-describe("outer corner lap — the drawing method must not change the bill", () => {
-  it("bills a two-contour room exactly like the same room drawn as one line", () => {
-    // The lap applies on top of a drawn far contour too. Skipping it there
-    // would make the same building cost different amounts depending on how the
-    // engineer traced it.
+describe("outer corner lap — every drawn face is covered once", () => {
+  it("keeps the paired outer contour lapped and free of duplicate placements", () => {
     for (const thickness of [10, 20]) {
-      const two = countPanels(
-        tileProjectPlacements(projectOf(doubleContourRoomWallsAt(thickness)))
+      const placements = tileProjectPlacements(
+        projectOf(doubleContourRoomWallsAt(thickness))
       );
-      const one = countPanels(tileProjectPlacements(projectOf(rectangleWallsAt(thickness))));
+      const footprints = placements.map((placement) =>
+        [
+          placement.edgeId,
+          placement.side,
+          placement.offsetAlongEdge.toFixed(2),
+          placement.width.toFixed(2),
+        ].join("|")
+      );
 
-      expect(two.byType, `t=${thickness}`).toEqual(one.byType);
-      expect(two.timberPieces, `t=${thickness}`).toBe(one.timberPieces);
+      expect(placements.some((placement) => placement.side === "faceB"), `t=${thickness}`).toBe(
+        true
+      );
+      expect(new Set(footprints).size, `t=${thickness}`).toBe(footprints.length);
     }
   });
 
