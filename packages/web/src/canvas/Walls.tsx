@@ -359,6 +359,29 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
               hidden={Math.hypot(b.x - a.x, b.y - a.y) < minCmForLabel}
               onEdit={() => onEditLength(wall)}
             />
+            {!frame.thicknessIsSet && !frame.isConsumed && (
+              <UnsetThicknessLabel
+                at={{
+                  x: (a.x + b.x) / 2 + n.x * (14 / scale),
+                  y: (a.y + b.y) / 2 + n.y * (14 / scale),
+                }}
+                color={color}
+                scale={scale}
+                draft={
+                  thicknessTextEdit?.wallId === wall.id ? thicknessTextEdit.draft : null
+                }
+                onEdit={() => {
+                  onSelect(wall.id);
+                  setThicknessTextEdit({
+                    wallId: wall.id,
+                    draft: "",
+                    originalCm: null,
+                    lastAppliedCm: null,
+                    replaceOnType: true,
+                  });
+                }}
+              />
+            )}
             {/* One static thickness per physical wall stays visible. Only the
                 primary selected wall gets the drag grip, so paired contours do
                 not duplicate dimensions and the canvas does not fill with
@@ -417,6 +440,68 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
         );
       })}
     </>
+  );
+}
+
+function UnsetThicknessLabel({
+  at,
+  color,
+  scale,
+  draft,
+  onEdit,
+}: {
+  at: Point;
+  color: string;
+  scale: number;
+  draft: string | null;
+  onEdit: () => void;
+}) {
+  const text = draft === null ? "הגדר עובי" : `${draft || "…"} ס"מ`;
+  const width = Math.max(58, text.length * 6) / scale;
+  const height = 20 / scale;
+  return (
+    <Group
+      x={at.x}
+      y={at.y}
+      onClick={(event) => {
+        event.cancelBubble = true;
+        onEdit();
+      }}
+      onTap={(event) => {
+        event.cancelBubble = true;
+        onEdit();
+      }}
+      onMouseEnter={(event) => {
+        const stage = event.target.getStage();
+        if (stage) stage.container().style.cursor = "text";
+      }}
+      onMouseLeave={(event) => {
+        const stage = event.target.getStage();
+        if (stage) stage.container().style.cursor = "";
+      }}
+    >
+      <Rect
+        x={-width / 2}
+        y={-height / 2}
+        width={width}
+        height={height}
+        fill="#ffffff"
+        stroke={color}
+        strokeWidth={1 / scale}
+        dash={draft === null ? [4 / scale, 3 / scale] : undefined}
+        cornerRadius={3 / scale}
+      />
+      <Text
+        x={-width / 2}
+        y={-5 / scale}
+        width={width}
+        text={text}
+        align="center"
+        fontSize={10 / scale}
+        fontStyle={draft === null ? "normal" : "bold"}
+        fill={color}
+      />
+    </Group>
   );
 }
 

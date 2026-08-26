@@ -67,7 +67,7 @@ export interface Pour {
   color: string;
   /** display order among a project's pours */
   order: number;
-  /** Thickness automatically assigned to newly drawn walls in this pour. */
+  /** @deprecated Kept only when loading older projects; new walls do not use it. */
   defaultThicknessCm?: number;
 }
 

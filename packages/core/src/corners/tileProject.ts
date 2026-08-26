@@ -26,13 +26,13 @@ import { placeCornerPanels } from "./placeCornerPanels.js";
  *    the project's saved inventory.
  * 7: partial inventory is placed unit-by-unit; only missing units are flagged
  *    instead of replacing an otherwise usable wall run with one red block.
- * 8: every resolved physical wall gets one panel row on its primary drawn
- *    line. Its opposite/paired face still defines thickness, but is not tiled
- *    a second time.
+ * 8: every resolved physical wall temporarily got only its primary row.
  * 9: clear outside K30 corners are derived from the current wall graph and
  *    stored in the layout instead of being seeded as fixture-only points.
+ * 10: every DRAWN face gets exactly one row. A paired second contour is tiled;
+ *     an undrawn face derived only from a thickness value is not.
  */
-export const ENGINE_VERSION = 9;
+export const ENGINE_VERSION = 10;
 
 export interface TileProjectResult {
   placements: Placement[];
@@ -49,8 +49,9 @@ export interface TileProjectResult {
  *      walls were only the far face of another wall.
  *   2. placeCornerPanels: a corner panel per room per corner, on the face that
  *      borders that room; overlap strips only on faces that border no room.
- *   3. Per resolved physical wall: tile its primary drawn face exactly once.
- *      The opposite face is retained as thickness geometry, not another row.
+ *   3. Per resolved physical wall: tile every face that the user actually
+ *      drew. A single line therefore gets one row; a paired inner+outer trace
+ *      gets two rows total, one on each source line.
  *
  * Consumed walls are never tiled — that is what stops a plan traced as two
  * rectangles from producing two independent, doubled-up wall sets.
@@ -77,13 +78,14 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
     const runs = corners.runs.get(edge?.id ?? "");
     if (!edge || !runs) continue;
 
-    // One panel row per resolved physical wall. faceA is the primary source
-    // line selected by resolveWalls (the room-facing line when two contours
-    // were drawn). faceB still drives thickness, dimensions and corner
-    // geometry, but tiling it would recreate the duplicate row reported by the
-    // customer and would make a two-contour drawing cost more than one contour.
+    // One panel row per DRAWN face. faceA is always the primary source line.
+    // faceB is included only when it came from a real paired contour; an
+    // unpaired wall's thickness-derived face must not manufacture another row.
     const faces: Placement[][] = [];
-    for (const face of [resolvedWall.faces[0]]) {
+    const drawnFaces = resolvedWall.faces.filter(
+      (face) => face.id === "faceA" || face.sourceWallId !== undefined
+    );
+    for (const face of drawnFaces) {
       const availability = availablePanelCountsByPour?.[resolvedWall.pourId];
       const tiled = tileWall(
         edge,
