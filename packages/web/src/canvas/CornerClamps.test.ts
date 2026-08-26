@@ -147,6 +147,8 @@ describe("corner clamp drawing", () => {
 
     expect(layout.nodes.find((node) => node.point.x === 0 && node.point.y === 0)?.type).toBe("T");
     expect(layout.externalCorners.filter((corner) => corner.pourId === "pour-1")).toHaveLength(4);
-    expect(brackets.filter((bracket) => bracket.key.endsWith(":pour-1"))).toHaveLength(4);
+    expect(brackets.filter((bracket) => bracket.key.startsWith("external:pour-1:"))).toHaveLength(
+      4
+    );
   });
 });
