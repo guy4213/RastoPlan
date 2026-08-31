@@ -102,8 +102,10 @@ export function initialProject(id: string): Project {
     name: "פרויקט חדש",
     createdAt: nowIso(),
     updatedAt: nowIso(),
-    catalog: DEFAULT_PANEL_CATALOG,
-    rules: DEFAULT_ACCESSORY_RULES,
+    // Catalog and rules are user-editable, so a project owns all nested
+    // defaults rather than sharing the exported singleton objects.
+    catalog: structuredClone(DEFAULT_PANEL_CATALOG),
+    rules: structuredClone(DEFAULT_ACCESSORY_RULES),
     pours: [defaultPour],
     walls: [],
     placements: [],
@@ -134,6 +136,7 @@ export function initialAppState(project: Project): AppState {
 
 export type Action =
   | { type: "load-project"; project: Project }
+  | { type: "new-project"; project: Project }
   | { type: "rename-project"; name: string }
   | { type: "set-tool"; tool: Tool }
   | { type: "set-active-pour"; pourId: string | null }
@@ -365,6 +368,11 @@ function findSyncTwin(target: Placement, all: Placement[]): Placement | undefine
 
 export function reduce(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case "new-project":
+      // New projects reset the editing session; opening an existing project
+      // deliberately retains its UI preferences through load-project.
+      return initialAppState(action.project);
+
     case "load-project": {
       const opened = openProject(action.project);
       return {

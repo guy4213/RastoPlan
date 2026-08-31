@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Point } from "@rastoplan/core";
-import { useProject } from "../state/ProjectContext.js";
+import { useProject, type SaveStatus } from "../state/ProjectContext.js";
 import { ProjectsModal } from "./ProjectsModal.js";
 
 interface FreeEndpoint {
@@ -32,7 +32,7 @@ function findFreeEndpoints(walls: { id: string; innerLine: [Point, Point] }[]): 
 }
 
 export function Toolbar() {
-  const { state, dispatch } = useProject();
+  const { state, dispatch, saveStatus } = useProject();
   const { tool, layoutDirty, activePourId, units, orthoLock } = state.ui;
   const [notice, setNotice] = useState<string | null>(null);
   const [projectsOpen, setProjectsOpen] = useState(false);
@@ -158,6 +158,7 @@ export function Toolbar() {
       )}
 
       <div style={{ marginInlineStart: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        <SaveIndicator status={saveStatus} />
         <div
           role="group"
           style={{
@@ -200,6 +201,27 @@ export function Toolbar() {
       </div>
       <ProjectsModal open={projectsOpen} onClose={() => setProjectsOpen(false)} />
     </header>
+  );
+}
+
+function SaveIndicator({ status }: { status: SaveStatus }) {
+  if (status === "idle") return null;
+
+  const labels: Record<Exclude<SaveStatus, "idle">, string> = {
+    saving: "שומר…",
+    saved: "נשמר",
+    error: "שגיאה",
+  };
+  const colors: Record<Exclude<SaveStatus, "idle">, string> = {
+    saving: "#64748b",
+    saved: "#15803d",
+    error: "#b91c1c",
+  };
+
+  return (
+    <span role="status" aria-live="polite" style={{ fontSize: 12, color: colors[status] }}>
+      {labels[status]}
+    </span>
   );
 }
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Placement } from "../../types.js";
-import { rectangleWalls } from "../../geometry/__tests__/fixtures.js";
+import { doubleContourRoomWalls, rectangleWalls } from "../../geometry/__tests__/fixtures.js";
 import { tileProject } from "../../corners/tileProject.js";
-import { countPanels } from "../countPanels.js";
+import { countPanels, countPanelsByFace } from "../countPanels.js";
 import { projectOf } from "./fixtures.js";
 
 function synthetic(overrides: Partial<Placement>): Placement {
@@ -63,5 +63,72 @@ describe("countPanels", () => {
 
   it("returns empty structure for an empty placement list", () => {
     expect(countPanels([])).toEqual({ byType: {}, timberPieces: 0, timberLengthCm: 0 });
+  });
+});
+
+describe("countPanelsByFace", () => {
+  it("partitions every panel type and timber total while preserving the legacy total", () => {
+    const walls = doubleContourRoomWalls();
+    const { placements } = tileProject(projectOf(walls));
+    const counts = countPanelsByFace(placements, walls);
+
+    for (const type of new Set([
+      ...Object.keys(counts.interior.byType),
+      ...Object.keys(counts.exterior.byType),
+    ])) {
+      expect((counts.interior.byType[type] ?? 0) + (counts.exterior.byType[type] ?? 0)).toBe(
+        counts.total.byType[type] ?? 0
+      );
+    }
+    expect(counts.interior.timberPieces + counts.exterior.timberPieces).toBe(
+      counts.total.timberPieces
+    );
+    expect(counts.interior.timberLengthCm + counts.exterior.timberLengthCm).toBe(
+      counts.total.timberLengthCm
+    );
+    expect(counts.total).toEqual(countPanels(placements));
+  });
+
+  it("counts a grouped corner once and uses its canonical representative's face bucket", () => {
+    const legs = [
+      synthetic({
+        id: "corner-a",
+        groupId: "corner:1",
+        kind: "corner-panel",
+        panelType: "C30x30",
+        faceIsInterior: true,
+      }),
+      synthetic({
+        id: "corner-b",
+        groupId: "corner:1",
+        kind: "corner-panel",
+        panelType: "C30x30",
+        faceIsInterior: false,
+        side: "faceB",
+      }),
+    ];
+
+    const counts = countPanelsByFace(legs, []);
+    expect(counts.interior.byType.C30x30).toBe(1);
+    expect(counts.exterior.byType.C30x30 ?? 0).toBe(0);
+    expect(counts.total.byType.C30x30).toBe(1);
+  });
+
+  it("has no exterior bucket for a single-contour rectangle", () => {
+    const walls = rectangleWalls();
+    const { placements } = tileProject(projectOf(walls));
+    expect(countPanelsByFace(placements, walls).exterior).toEqual({
+      byType: {},
+      timberPieces: 0,
+      timberLengthCm: 0,
+    });
+  });
+
+  it("populates both buckets for a double-contour rectangle", () => {
+    const walls = doubleContourRoomWalls();
+    const { placements } = tileProject(projectOf(walls));
+    const counts = countPanelsByFace(placements, walls);
+    expect(Object.values(counts.interior.byType).reduce((sum, n) => sum + n, 0)).toBeGreaterThan(0);
+    expect(Object.values(counts.exterior.byType).reduce((sum, n) => sum + n, 0)).toBeGreaterThan(0);
   });
 });

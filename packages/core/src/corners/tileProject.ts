@@ -1,7 +1,7 @@
 import type { Placement, Project, ProjectLayout, RegionSummary } from "../types.js";
 import { resolveWalls } from "../contours/resolveWalls.js";
 import type { ResolveOptions } from "../contours/constants.js";
-import { tileWall } from "../tiling/tileWall.js";
+import { tileWallPair } from "../tiling/tileWallPair.js";
 import { detectExternalCorners } from "../geometry/detectExternalCorners.js";
 import { placeCornerPanels } from "./placeCornerPanels.js";
 
@@ -33,8 +33,16 @@ import { placeCornerPanels } from "./placeCornerPanels.js";
  *     an undrawn face derived only from a thickness value is not.
  * 11: outside K30 corners follow the drawn exterior face of a paired wall,
  *     rather than the primary inner contour retained for tiling bookkeeping.
+ * 12: both faces of a wall are tiled as one unit. The stretch they share is
+ *     planned once and placed at identical offsets on each face, so their
+ *     joints line up across the wall's thickness; only what a face holds
+ *     beyond that stretch is chosen for it alone. Versions up to 11 tiled each
+ *     face independently, which the customer's reference drawing shows to be
+ *     wrong in every wall, so those layouts must not survive.
+ * 13: re-entrant corners on a drawn exterior contour receive their required
+ *     C30x30 panel. Version 12 can retain untileable 10cm end remnants there.
  */
-export const ENGINE_VERSION = 11;
+export const ENGINE_VERSION = 13;
 
 export interface TileProjectResult {
   placements: Placement[];
@@ -83,45 +91,47 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
     // One panel row per DRAWN face. faceA is always the primary source line.
     // faceB is included only when it came from a real paired contour; an
     // unpaired wall's thickness-derived face must not manufacture another row.
-    const faces: Placement[][] = [];
+    //
+    // Both rows are produced by ONE call: where the faces overlap they must
+    // carry the same panels at the same offsets, and that is guaranteed by
+    // planning the shared stretch once rather than by tiling each face and
+    // comparing afterwards.
     const drawnFaces = resolvedWall.faces.filter(
       (face) => face.id === "faceA" || face.sourceWallId !== undefined
     );
-    for (const face of drawnFaces) {
-      const availability = availablePanelCountsByPour?.[resolvedWall.pourId];
-      const tiled = tileWall(
-        edge,
-        {
-          wallId: resolvedWall.id,
-          pourId: resolvedWall.pourId,
-          side: face.id,
-          faceIsInterior: face.isInterior,
-          clearLength: runs[face.id].clearLength,
-          startOffset: runs[face.id].startOffset,
-        },
-        catalog,
-        rules,
-        availability
-      );
-      consumeStraightPanels(tiled, availability);
-      const missing = missingPanelCounts(tiled);
-      if (Object.keys(missing).length > 0) {
-        diagnostics.push({
-          code: "inventory-straight-panel-shortage",
-          severity: "error",
-          message: `חסרים במלאי למקטע זה: ${Object.entries(missing)
-            .map(([type, count]) => `${type} × ${count}`)
-            .join(", ")}`,
-          wallIds: [resolvedWall.id],
-          nodeIds: [edge.nodeA, edge.nodeB],
-        });
-      }
-      faces.push(tiled);
+    const availability = availablePanelCountsByPour?.[resolvedWall.pourId];
+    const tiled = tileWallPair({
+      edge,
+      wallId: resolvedWall.id,
+      pourId: resolvedWall.pourId,
+      faces: drawnFaces.map((face) => ({
+        side: face.id,
+        faceIsInterior: face.isInterior,
+        clearLength: runs[face.id].clearLength,
+        startOffset: runs[face.id].startOffset,
+      })),
+      catalog,
+      rules,
+      availability,
+    });
+    diagnostics.push(...tiled.diagnostics);
+    consumeStraightPanels(tiled.placements, availability);
+    const missing = missingPanelCounts(tiled.placements);
+    if (Object.keys(missing).length > 0) {
+      diagnostics.push({
+        code: "inventory-straight-panel-shortage",
+        severity: "error",
+        message: `חסרים במלאי למקטע זה: ${Object.entries(missing)
+          .map(([type, count]) => `${type} × ${count}`)
+          .join(", ")}`,
+        wallIds: [resolvedWall.id],
+        nodeIds: [edge.nodeA, edge.nodeB],
+      });
     }
 
     placements.push(
       ...corners.cornerPanels.filter((p) => p.edgeId === edge.id),
-      ...faces.flat(),
+      ...tiled.placements,
       ...corners.protrusions.filter((p) => p.edgeId === edge.id)
     );
   }

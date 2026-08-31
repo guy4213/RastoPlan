@@ -86,19 +86,27 @@ export function faceRunFor(input: FaceRunInput): FaceRun {
 
   const neighbourAt = (nodeId: string) => otherWallThicknessAt(nodeId, edge, edges, wallById);
 
-  // A face that borders a room stops at its corner panel's leg. A face that
-  // borders no room gives up nothing: the outer corner is just two straight
-  // panels meeting at the outer corner point, each covering its own line right
-  // up to it. There is no corner piece and no overlap strip out there.
-  const consumedAtA = bordersRoom && cornerA ? (cornerPanelWidthById.get(cornerA.id) ?? 0) : 0;
-  const consumedAtB = bordersRoom && cornerB ? (cornerPanelWidthById.get(cornerB.id) ?? 0) : 0;
-
   // When the user drew this face as its own contour, its extent is a fact we
   // can read straight off the drawing. Only a derived face has to infer how far
   // it wraps past each corner from the neighbouring wall's thickness.
   const drawn = faceSpec?.sourceWallId && face !== "faceA" ? projectedExtent(input) : null;
   const derivedA = extensionFor(cornersAtA, faceSpec?.regionId, neighbourAt(edge.nodeA));
   const derivedB = extensionFor(cornersAtB, faceSpec?.regionId, neighbourAt(edge.nodeB));
+
+  // A room face always stops at its corner-panel leg. A non-room face normally
+  // runs to the outer corner, but a re-entrant building corner folds inward on
+  // that face and is therefore an inside formwork corner too.
+  const cornerWidthAt = (
+    corner: CornerAtNode | null,
+    foldsInward: boolean,
+    nodeId: string
+  ): number => {
+    if (bordersRoom) return corner ? (cornerPanelWidthById.get(corner.id) ?? 0) : 0;
+    if (!foldsInward) return 0;
+    return cornerPanelWidthById.get(exteriorCornerId(nodeId, faceSpec?.regionId)) ?? 0;
+  };
+  const consumedAtA = cornerWidthAt(cornerA, derivedA.cm < 0, edge.nodeA);
+  const consumedAtB = cornerWidthAt(cornerB, derivedB.cm < 0, edge.nodeB);
   const extensionAtA = drawn?.startExtension ?? derivedA.cm;
   const extensionAtB = drawn?.endExtension ?? derivedB.cm;
 
@@ -165,6 +173,19 @@ function projectedExtent(
     startExtension: Math.round(-ends[0]!),
     endExtension: Math.round(ends[1]! - input.geometricLength),
   };
+}
+
+/** One physical corner-panel id shared by both legs on a non-room face. */
+export function exteriorCornerId(nodeId: string, regionId: string | undefined): string {
+  return `corner:${nodeId}:${regionId}`;
+}
+
+/** Whether this face forms a re-entrant, inside formwork corner at the node. */
+export function faceFoldsInwardAt(
+  corners: CornerAtNode[],
+  regionId: string | undefined
+): boolean {
+  return extensionFor(corners, regionId, 1).cm < 0;
 }
 
 /**

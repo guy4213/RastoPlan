@@ -114,9 +114,7 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (edit.originalCm === null && edit.lastAppliedCm !== null) {
-          dispatch({ type: "update-wall", wallId: edit.wallId, patch: { thicknessSet: false } });
-        } else if (
+        if (
           edit.originalCm !== null &&
           edit.lastAppliedCm !== null &&
           Math.abs(edit.lastAppliedCm - edit.originalCm) >= 0.001

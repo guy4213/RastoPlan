@@ -108,10 +108,57 @@ describe("tileProject — the customer's two-contour drawing", () => {
   });
 
   it("handles the two-contour L-shape as one six-wall ring", () => {
-    const placements = tile(doubleContourLShapeWalls());
+    const project = projectOf(doubleContourLShapeWalls());
+    const { placements, layout } = tileProject(project);
+    const exteriorCornerLegs = placements.filter(
+      (placement) => placement.kind === "corner-panel" && !placement.faceIsInterior
+    );
 
-    expect(countCornerUnits(placements)).toBe(6);
+    // Six physical walls still form the ring. The seventh corner unit is the
+    // approved C30x30 on the exterior face of the re-entrant building corner.
+    expect(countCornerUnits(placements)).toBe(7);
     expect(new Set(placements.map((p) => p.wallId)).size).toBe(6);
+    expect(exteriorCornerLegs).toHaveLength(2);
+    expect(new Set(exteriorCornerLegs.map((placement) => placement.groupId)).size).toBe(1);
+    expect(exteriorCornerLegs.every((placement) => placement.side === "faceB")).toBe(true);
+    expect(
+      exteriorCornerLegs.every((placement) => placement.groupId?.endsWith(":region:outside"))
+    ).toBe(true);
+    expect(
+      placements.filter((placement) =>
+        placement.flags.includes("face-alignment-remainder")
+      )
+    ).toHaveLength(0);
+    expect(
+      layout.diagnostics.filter(
+        (diagnostic) => diagnostic.code === "face-alignment-remainder"
+      )
+    ).toHaveLength(0);
+    expect(
+      placements.some(
+        (placement) =>
+          placement.edgeId === "edge:in-3" &&
+          placement.side === "faceA" &&
+          placement.panelType === "R20"
+      )
+    ).toBe(true);
+  });
+
+  it("adds one C30x30 without changing the independently derived K30 count", () => {
+    const project = projectOf(doubleContourLShapeWalls());
+    const result = tileProject(project);
+    const panels = countPanels(result.placements);
+    const accessories = countAccessories(
+      result.placements,
+      result.layout.edges,
+      project.walls,
+      project.rules,
+      result.layout.externalCorners
+    );
+
+    expect(panels.byType.C30x30).toBe(7);
+    expect(result.layout.externalCorners).toHaveLength(5);
+    expect(accessories.cornerClamps).toBe(15);
   });
 
   it("raises no unexpected flags", () => {

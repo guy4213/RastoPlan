@@ -7,10 +7,12 @@ import { WallPanel } from "./panels/WallPanel.js";
 import { QuantitiesPanel } from "./panels/QuantitiesPanel.js";
 import { Legend } from "./panels/Legend.js";
 import { ToastProvider } from "./ui/Toast.js";
+import { AuthGate } from "./panels/AuthGate.js";
 
 export function App() {
   return (
     <ToastProvider>
+    <AuthGate>
     <ProjectProvider>
       <div
         dir="rtl"
@@ -61,6 +63,7 @@ export function App() {
         </aside>
       </div>
     </ProjectProvider>
+    </AuthGate>
     </ToastProvider>
   );
 }

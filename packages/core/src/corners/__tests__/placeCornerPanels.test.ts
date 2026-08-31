@@ -4,6 +4,7 @@ import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.j
 import { resolveWalls } from "../../contours/resolveWalls.js";
 import {
   collinearSplitWallWalls,
+  doubleContourLShapeWalls,
   lShapeWalls,
   lShapedPartitionWalls,
   rectangleWalls,
@@ -130,6 +131,41 @@ describe("placeCornerPanels — a corner panel at EVERY corner", () => {
       result.cornerPanels.every((panel) => panel.flags.includes("inventory-shortage"))
     ).toBe(true);
     expect(new Set(result.cornerPanels.map((panel) => panel.groupId)).size).toBe(4);
+  });
+
+  it("emits the two exterior legs of a re-entrant corner as one physical unit", () => {
+    const result = prep(doubleContourLShapeWalls());
+    const exteriorLegs = result.cornerPanels.filter((panel) => !panel.faceIsInterior);
+
+    expect(exteriorLegs).toHaveLength(2);
+    expect(cornerUnits(exteriorLegs)).toBe(1);
+    expect(exteriorLegs.every((panel) => panel.side === "faceB")).toBe(true);
+    expect(exteriorLegs.every((panel) => panel.panelType === "C30x30")).toBe(true);
+  });
+
+  it("keeps an unavailable exterior corner visible and flags its shared unit", () => {
+    const zeroInventory = Object.fromEntries(
+      DEFAULT_PANEL_CATALOG.panels.map((panel) => [panel.type, 0])
+    );
+    const result = placeCornerPanels({
+      resolution: resolveWalls(doubleContourLShapeWalls()),
+      walls: doubleContourLShapeWalls(),
+      catalog: DEFAULT_PANEL_CATALOG,
+      rules: DEFAULT_ACCESSORY_RULES,
+      availablePanelCountsByPour: { "pour-1": zeroInventory },
+    });
+    const exteriorLegs = result.cornerPanels.filter((panel) => !panel.faceIsInterior);
+
+    expect(exteriorLegs).toHaveLength(2);
+    expect(cornerUnits(exteriorLegs)).toBe(1);
+    expect(exteriorLegs.every((panel) => panel.flags.includes("inventory-shortage"))).toBe(true);
+    expect(
+      result.diagnostics.some(
+        (diagnostic) =>
+          diagnostic.code === "inventory-corner-panel-shortage" &&
+          diagnostic.nodeIds.includes("node:3")
+      )
+    ).toBe(true);
   });
 });
 

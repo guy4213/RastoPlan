@@ -4,11 +4,11 @@
 export interface ServerConfig {
   port: number;
   host: string;
-  /** Postgres connection string. Unused until Milestone 3 (db/index.ts is a stub). */
+  /** Neon pooled Postgres connection string. */
   databaseUrl: string | undefined;
-  /** Shared office password (see spec 12.3) used to mint a session/JWT. No per-user accounts in MVP. */
-  officePassword: string | undefined;
-  /** Secret used to sign the session/JWT once auth is implemented. */
+  /** The single browser origin allowed to call the API with cookies. */
+  webOrigin: string;
+  /** Secret used to sign the session cookie. Required once auth is enabled. */
   authSecret: string | undefined;
 }
 
@@ -17,7 +17,29 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     port: env.PORT ? Number(env.PORT) : 3000,
     host: env.HOST ?? "0.0.0.0",
     databaseUrl: env.DATABASE_URL,
-    officePassword: env.OFFICE_PASSWORD,
+    webOrigin: env.WEB_ORIGIN ?? "http://localhost:5173",
     authSecret: env.AUTH_SECRET,
   };
+}
+
+/** Session cookies must be signed; refusing to boot beats issuing forgeable ones. */
+export function requireAuthSecret(authSecret: string | undefined): string {
+  if (!authSecret || authSecret.length < 32) {
+    throw new Error("AUTH_SECRET is required and must be at least 32 characters");
+  }
+  return authSecret;
+}
+
+/**
+ * Cross-site cookies need SameSite=None, which browsers only accept together
+ * with Secure — and Secure cookies are dropped on plain http. Local development
+ * therefore has to fall back to Lax, which works because Vite and the API are
+ * both on http://localhost.
+ */
+export function sessionCookieOptions(webOrigin: string): {
+  sameSite: "none" | "lax";
+  secure: boolean;
+} {
+  const crossSiteCapable = webOrigin.startsWith("https://");
+  return crossSiteCapable ? { sameSite: "none", secure: true } : { sameSite: "lax", secure: false };
 }

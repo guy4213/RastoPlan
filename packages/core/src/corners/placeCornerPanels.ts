@@ -11,8 +11,21 @@ import type {
   Wall,
 } from "../types.js";
 import type { WallResolution } from "../contours/resolveWalls.js";
-import { faceRunFor } from "./faceRuns.js";
+import { exteriorCornerId, faceFoldsInwardAt, faceRunFor } from "./faceRuns.js";
 import type { FaceRun } from "./faceRuns.js";
+
+interface ExteriorCornerLeg {
+  edgeId: string;
+  end: "A" | "B";
+  side: PlacementSide;
+  wallId: string;
+  pourId: string;
+}
+
+interface ExteriorCorner {
+  nodeId: string;
+  legs: ExteriorCornerLeg[];
+}
 
 export interface PlaceCornerPanelsInput {
   resolution: WallResolution;
@@ -118,6 +131,73 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
     }
   }
 
+  // Re-entrant corners on drawn non-room faces are inside corners of the
+  // formwork too. Reserve their physical panels before calculating runs, whose
+  // lengths depend on the selected leg width.
+  const exteriorCorners = new Map<string, ExteriorCorner>();
+  for (const edge of resolution.edges) {
+    const resolvedWall = resolution.wallByEdgeId.get(edge.id);
+    if (!resolvedWall) continue;
+
+    for (const end of ["A", "B"] as const) {
+      const nodeId = end === "A" ? edge.nodeA : edge.nodeB;
+      const corners = cornersAt(edge, end, cornersByEdgeId, nodeById);
+      if (corners.length === 0) continue;
+
+      for (const face of resolvedWall.faces) {
+        const isDrawn = face.id === "faceA" || face.sourceWallId !== undefined;
+        if (face.isInterior || !isDrawn || !faceFoldsInwardAt(corners, face.regionId)) continue;
+
+        const id = exteriorCornerId(nodeId, face.regionId);
+        const exteriorCorner = exteriorCorners.get(id) ?? { nodeId, legs: [] };
+        exteriorCorner.legs.push({
+          edgeId: edge.id,
+          end,
+          side: face.id,
+          wallId: resolvedWall.id,
+          pourId: resolvedWall.pourId,
+        });
+        exteriorCorners.set(id, exteriorCorner);
+      }
+    }
+  }
+
+  for (const [id, exteriorCorner] of exteriorCorners) {
+    const firstLeg = exteriorCorner.legs[0];
+    if (!firstLeg) continue;
+
+    const availability = input.availablePanelCountsByPour?.[firstLeg.pourId];
+    const stockedPanel = pickCornerPanel(catalog, availability);
+    const panel = stockedPanel ?? pickCornerPanel(catalog, undefined, availability !== undefined);
+    const wallIds = [...new Set(exteriorCorner.legs.map((leg) => leg.wallId))];
+    if (!panel) {
+      diagnostics.push({
+        code: "inventory-corner-panel-shortage",
+        severity: "error",
+        message: "לא נמצא בקטלוג פאנל פינה עבור אחת הפינות",
+        wallIds,
+        nodeIds: [exteriorCorner.nodeId],
+      });
+      continue;
+    }
+    if (availability && !stockedPanel) {
+      missingCornerIds.add(id);
+      diagnostics.push({
+        code: "inventory-corner-panel-shortage",
+        severity: "error",
+        message: `חסר במלאי פאנל פינה ${panel.type}`,
+        wallIds,
+        nodeIds: [exteriorCorner.nodeId],
+      });
+    }
+
+    cornerPanelById.set(id, panel);
+    cornerPanelWidthById.set(id, panel.width);
+    if (availability && stockedPanel) {
+      availability[panel.type] = Math.max(0, (availability[panel.type] ?? 0) - 1);
+    }
+  }
+
   const adjustedEdges: Edge[] = resolution.edges.map((edge) => {
     const resolvedWall = resolution.wallByEdgeId.get(edge.id);
     const wall = wallById.get(edge.wallId);
@@ -152,6 +232,16 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
         )
       ) {
         pushOnce(flags, "inventory-shortage");
+      }
+      for (const face of resolvedWall.faces) {
+        const id = exteriorCornerId(nodeId, face.regionId);
+        const exteriorCorner = exteriorCorners.get(id);
+        const belongsToEnd = exteriorCorner?.legs.some(
+          (leg) => leg.edgeId === edge.id && leg.end === end && leg.side === face.id
+        );
+        if (belongsToEnd && (!cornerPanelById.has(id) || missingCornerIds.has(id))) {
+          pushOnce(flags, "inventory-shortage");
+        }
       }
     }
 
@@ -202,7 +292,36 @@ export function placeCornerPanels(input: PlaceCornerPanelsInput): PlaceCornerPan
           source: "auto",
           flags: missingCornerIds.has(corner.id) ? ["inventory-shortage"] : [],
         });
+      }
 
+      const nodeId = end === "A" ? edge.nodeA : edge.nodeB;
+      for (const face of resolvedWall.faces) {
+        const id = exteriorCornerId(nodeId, face.regionId);
+        const exteriorCorner = exteriorCorners.get(id);
+        const belongsToEnd = exteriorCorner?.legs.some(
+          (leg) => leg.edgeId === edge.id && leg.end === end && leg.side === face.id
+        );
+        if (!belongsToEnd) continue;
+
+        const cornerPanel = cornerPanelById.get(id);
+        if (!cornerPanel) continue;
+        const run = faceRuns[face.id];
+        cornerPanels.push({
+          id: `placement:${edge.id}:corner:${end}:${face.id}`,
+          groupId: id,
+          edgeId: edge.id,
+          wallId: resolvedWall.id,
+          pourId: resolvedWall.pourId,
+          side: face.id,
+          faceIsInterior: false,
+          kind: "corner-panel",
+          panelType: cornerPanel.type,
+          offsetAlongEdge:
+            end === "A" ? run.startOffset - cornerPanel.width : run.startOffset + run.clearLength,
+          width: cornerPanel.width,
+          source: "auto",
+          flags: missingCornerIds.has(id) ? ["inventory-shortage"] : [],
+        });
       }
     }
 

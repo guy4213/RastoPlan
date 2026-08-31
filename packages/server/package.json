@@ -8,13 +8,16 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node --input-type=module -e \"import { copyFile } from 'node:fs/promises'; await copyFile('src/db/schema.sql', 'dist/db/schema.sql');\"",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"no tests yet in @rastoplan/server\""
+    "test": "tsx --test src/db/index.test.ts src/routes/projects.test.ts src/routes/auth.test.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/cors": "11",
     "@rastoplan/core": "workspace:*",
-    "fastify": "^5.2.0"
+    "fastify": "^5.2.0",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

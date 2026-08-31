@@ -1,0 +1,43 @@
+########## SIDE BY SIDE: DWG rows vs engine rows, same spans ##########
+
+--- A[0,995] B[60,940]  (contained) ---
+  DWG    A: 60 75 75 75 75 75 75 75 75 75 75 75 55 55
+  ENGINE A: R60@0 R75@60 R75@135 R75@210 R75@285 R75@360 R75@435 R55@510 R75@565 R75@640 R75@715 R75@790 R75@865 R55@940
+  DWG    B: 75 75 75 75 75 75 75 75 75 75 75 55
+  ENGINE B: R75@60 R75@135 R75@210 R75@285 R75@360 R75@435 R55@510 R75@565 R75@640 R75@715 R75@790 R75@865
+
+--- A[60,165] B[0,145]  (partial) ---
+  DWG    A: 40 45 20
+  ENGINE A: R85@60 R20@145
+  DWG    B: 60 40 45
+  ENGINE B: R60@0 R85@60
+
+--- A[0,840] B[60,840]  (contained) ---
+  DWG    A: 60 50 55 75 75 75 75 75 75 75 75 75
+  ENGINE A: R60@0 R75@60 R75@135 R75@210 R75@285 R75@360 R30@435 R75@465 R75@540 R75@615 R75@690 R75@765
+  DWG    B: 50 55 75 75 75 75 75 75 75 75 75
+  ENGINE B: R75@60 R75@135 R75@210 R75@285 R75@360 R30@435 R75@465 R75@540 R75@615 R75@690 R75@765
+
+--- A[0,995] B[60,940]  (contained) ---
+  DWG    A: 60 75 75 75 75 75 75 75 75 75 75 75 55 55
+  ENGINE A: R60@0 R75@60 R75@135 R75@210 R75@285 R75@360 R75@435 R55@510 R75@565 R75@640 R75@715 R75@790 R75@865 R55@940
+  DWG    B: 75 75 75 75 75 75 75 75 75 75 75 55
+  ENGINE B: R75@60 R75@135 R75@210 R75@285 R75@360 R75@435 R55@510 R75@565 R75@640 R75@715 R75@790 R75@865
+
+########## THE THREE FLAGGED END SEGMENTS ##########
+
+--- A[0,195] B[10,160] ---
+  faceA: timber@0!gap-out-of-range+face-alignment-remainder R75@10 R75@85 R35@160
+  faceB: R75@10 R75@85
+  FLAGGED -> kind=timber panelType="" width=10 offset=0 flags=[gap-out-of-range, face-alignment-remainder]
+  DIAGNOSTIC -> face-alignment-remainder: קטע בתחילת הקיר בצד הפנימי באורך 10 ס״מ — אין שילוב תבניות שמכסה אותו
+
+--- A[34,359] B[0,360] ---
+  faceA: R75@34 R75@109 R25@184 R75@209 R75@284
+  faceB: R25@0 timber@25 R75@34 R75@109 R25@184 R75@209 R75@284 timber@359!gap-out-of-range+face-alignment-remainder
+  FLAGGED -> kind=timber panelType="" width=1 offset=359 flags=[gap-out-of-range, face-alignment-remainder]
+  DIAGNOSTIC -> face-alignment-remainder: קטע בסוף הקיר בצד החיצוני באורך 1 ס״מ — אין שילוב תבניות שמכסה אותו
+
+ ✓ src/__cmp.test.ts (1 test) 62ms
+
+ Test Files  1 passed (1)

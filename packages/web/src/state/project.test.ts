@@ -1,13 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Point, Project, Wall } from "@rastoplan/core";
 import {
   DEFAULT_ACCESSORY_RULES,
   DEFAULT_PANEL_CATALOG,
   ENGINE_VERSION,
+  checkFaceAlignment,
   perpendicularDistance,
 } from "@rastoplan/core";
 import type { Action, AppState } from "./project.js";
-import { initialAppState, reduce } from "./project.js";
+import { initialAppState, initialProject, reduce } from "./project.js";
+import { AUTO_COMPUTE_DELAY_MS, scheduleAutoCompute } from "./ProjectContext.js";
 
 /** The 400x300 room traced as two contours `t` apart, as the user would draw it. */
 function twoContourRoom(t: number, pourId = "pour-1"): Wall[] {
@@ -58,6 +60,135 @@ function run(state: AppState, ...actions: Action[]): AppState {
 function wallIn(state: AppState, id: string): Wall {
   return state.project.walls.find((w) => w.id === id)!;
 }
+
+afterEach(() => vi.useRealTimers());
+
+describe("new projects", () => {
+  it("start without drawing, layout, inventory, or quantity overrides", () => {
+    const project = initialProject("fresh-project");
+
+    expect(project.walls).toEqual([]);
+    expect(project.placements).toEqual([]);
+    expect(project.layout).toBeUndefined();
+    expect(project.inventory).toBeUndefined();
+    expect(project.overrides).toBeUndefined();
+  });
+
+  it("resets the editing UI instead of inheriting it from the project that was open", () => {
+    const state = stateWith(twoContourRoom(20));
+    const dirty: AppState = {
+      ...state,
+      ui: {
+        ...state.ui,
+        tool: "draw-wall",
+        activePourId: "pour-2",
+        selectedWallId: "in-bottom",
+        selectedWallIds: ["in-bottom", "in-right"],
+        selectedPlacementId: "placement-1",
+        view: { scale: 2, offset: { x: -40, y: 80 } },
+        layoutDirty: true,
+        units: "m",
+        notice: "old project notice",
+        orthoLock: true,
+      },
+    };
+    const fresh = initialProject("fresh-project");
+
+    const after = reduce(dirty, { type: "new-project", project: fresh });
+
+    expect(after.project.id).toBe(fresh.id);
+    expect(after.ui).toEqual(initialAppState(fresh).ui);
+  });
+
+  it("gives each project independent nested catalog and rules defaults", () => {
+    const first = initialProject("first");
+    const second = initialProject("second");
+
+    expect(first.catalog).not.toBe(second.catalog);
+    expect(first.catalog.panels).not.toBe(second.catalog.panels);
+    expect(first.catalog.panels[0]).not.toBe(second.catalog.panels[0]);
+    expect(first.rules).not.toBe(second.rules);
+    expect(first.rules.tilingPriority).not.toBe(second.rules.tilingPriority);
+
+    first.catalog.panels[0]!.inStock = false;
+    first.rules.tilingPriority.push("min-panels");
+
+    expect(second.catalog.panels[0]!.inStock).toBe(true);
+    expect(second.rules.tilingPriority).toEqual(DEFAULT_ACCESSORY_RULES.tilingPriority);
+  });
+});
+
+describe("automatic compute", () => {
+  it("computes a geometry edit after the 300ms debounce", () => {
+    vi.useFakeTimers();
+    let state = run(stateWith([]), {
+      type: "add-wall",
+      a: { x: 0, y: 0 },
+      b: { x: 400, y: 0 },
+    });
+    const cancel = scheduleAutoCompute(state.ui.layoutDirty, (action) => {
+      state = reduce(state, action);
+    });
+
+    vi.advanceTimersByTime(AUTO_COMPUTE_DELAY_MS - 1);
+    expect(state.project.layout).toBeUndefined();
+
+    vi.advanceTimersByTime(1);
+    expect(state.project.layout).toBeDefined();
+    expect(state.ui.layoutDirty).toBe(false);
+    cancel();
+  });
+
+  it("does not compute a quantity override and preserves the decision", () => {
+    vi.useFakeTimers();
+    let state = run(stateWith(twoContourRoom(20)), { type: "compute" });
+    const layout = state.project.layout;
+    state = reduce(state, {
+      type: "set-quantity-override",
+      field: "cornerClamps",
+      pourId: "pour-1",
+      value: 17,
+    });
+    const cancel = scheduleAutoCompute(state.ui.layoutDirty, (action) => {
+      state = reduce(state, action);
+    });
+
+    vi.advanceTimersByTime(AUTO_COMPUTE_DELAY_MS);
+    expect(state.project.layout).toBe(layout);
+    expect(state.project.overrides?.cornerClamps?.["pour-1"]).toBe(17);
+    cancel();
+  });
+});
+
+describe("live face-alignment checks after manual edits", () => {
+  it("keeps the computed layout while a non-synchronised placement edit is reported", () => {
+    const before = run(stateWith(twoContourRoom(20)), { type: "compute" });
+    expect(checkFaceAlignment(before.project.placements)).toEqual([]);
+    const byEdge = new Map<string, typeof before.project.placements>();
+    for (const placement of before.project.placements) {
+      if (placement.kind !== "panel" || placement.side !== "faceA") continue;
+      const row = byEdge.get(placement.edgeId) ?? [];
+      row.push(placement);
+      byEdge.set(placement.edgeId, row);
+    }
+    const row = [...byEdge.values()].find((placements) => placements.length >= 3)!;
+    const target = [...row].sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge)[1]!;
+
+    const after = reduce(before, {
+      type: "update-placement",
+      placementId: target.id,
+      patch: { side: "faceB" },
+    });
+
+    expect(after.project.layout).toBe(before.project.layout);
+    expect(after.ui.layoutDirty).toBe(false);
+    expect(checkFaceAlignment(after.project.placements)).toContainEqual({
+      edgeId: target.edgeId,
+      offsetAlongEdge: target.offsetAlongEdge,
+      kind: "missing-opposite",
+    });
+  });
+});
 
 describe("compute — reading the drawing back into the thickness field", () => {
   it("writes the measured gap onto both contours of the wall", () => {

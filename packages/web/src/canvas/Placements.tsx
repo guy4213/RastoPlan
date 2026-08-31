@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import { Group, Line, Text } from "react-konva";
 import type Konva from "konva";
+import { checkFaceAlignment } from "@rastoplan/core";
 import type { Placement, Point, ProjectLayout, Wall } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
 import {
@@ -27,8 +28,9 @@ interface Colors {
   text: string;
 }
 
-function colorsFor(placement: Placement): Colors {
-  const isFlagged = placement.flags.some((f) => f !== "outer-corner-protrusion");
+function colorsFor(placement: Placement, alignmentFlagged: boolean): Colors {
+  const isFlagged =
+    alignmentFlagged || placement.flags.some((f) => f !== "outer-corner-protrusion");
   if (isFlagged) return { fill: "#fecaca", stroke: "#b91c1c", text: "#7f1d1d" };
   if (placement.source === "manual") return { fill: "#fef3c7", stroke: "#b45309", text: "#78350f" };
   if (placement.flags.includes("outer-corner-protrusion"))
@@ -105,6 +107,14 @@ export function Placements({
   const depth = PLACEMENT_BAND_DEPTH_CM;
   const cornerProtrusion = state.project.rules.outerCornerProtrusionCm;
   const cornerClearance = state.project.rules.outerCornerLapGapCm;
+  const alignment = useMemo(() => checkFaceAlignment(placements), [placements]);
+  const alignmentOffsets = useMemo(
+    () =>
+      new Set(
+        alignment.map((issue) => `${issue.edgeId}\u0000${issue.offsetAlongEdge.toFixed(2)}`)
+      ),
+    [alignment]
+  );
 
   // One physical corner panel is two legs sharing a groupId. Labelling both
   // printed "C30x30" and "30" next to each other on one panel, which is what
@@ -153,7 +163,10 @@ export function Placements({
         const [c0, c1, c2, c3] = placementBandCorners(paintedPlacement, wall, frame, depth);
         const points = [c0.x, c0.y, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y];
 
-        const colors = colorsFor(placement);
+        const alignmentFlagged = alignmentOffsets.has(
+          `${placement.edgeId}\u0000${placement.offsetAlongEdge.toFixed(2)}`
+        );
+        const colors = colorsFor(placement, alignmentFlagged);
         const selected = placement.id === selectedPlacementId;
 
         // Centre of the band, straight off its own corners.
@@ -261,6 +274,17 @@ export function Placements({
               strokeWidth={(selected ? 2 : 1) / scale}
               opacity={0.92}
             />
+            {alignmentFlagged && (
+              <Text
+                x={c0.x}
+                y={c0.y}
+                text="!"
+                fontSize={14 / scale}
+                fontStyle="bold"
+                fill="#b91c1c"
+                listening={false}
+              />
+            )}
             {/* The 45° fold at the corner, as the AutoCAD detail draws it: one
                 panel bent around the corner, not two blocks butted together. */}
             {isCornerLeg && (

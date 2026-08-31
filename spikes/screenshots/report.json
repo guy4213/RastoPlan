@@ -1,0 +1,350 @@
+{
+  "rect": {
+    "title": "single-contour rectangle 400x300, t=20",
+    "files": [
+      "C:\\Users\\guy42\\Desktop\\RastoPlan\\spikes\\screenshots\\rect-full.png",
+      "C:\\Users\\guy42\\Desktop\\RastoPlan\\spikes\\screenshots\\rect-corner.png",
+      "C:\\Users\\guy42\\Desktop\\RastoPlan\\spikes\\screenshots\\rect-seam.png"
+    ],
+    "placements": 24,
+    "diagnostics": [],
+    "flagged": 0,
+    "walls": [
+      {
+        "edgeId": "edge:r-top",
+        "faceA": [
+          30,
+          370
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R75",
+          "R75",
+          "R40",
+          "R75",
+          "R75"
+        ],
+        "rowB": []
+      },
+      {
+        "edgeId": "edge:r-right",
+        "faceA": [
+          30,
+          270
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R90",
+          "R75",
+          "R75"
+        ],
+        "rowB": []
+      },
+      {
+        "edgeId": "edge:r-bottom",
+        "faceA": [
+          30,
+          370
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R75",
+          "R75",
+          "R40",
+          "R75",
+          "R75"
+        ],
+        "rowB": []
+      },
+      {
+        "edgeId": "edge:r-left",
+        "faceA": [
+          30,
+          270
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R90",
+          "R75",
+          "R75"
+        ],
+        "rowB": []
+      }
+    ]
+  },
+  "double": {
+    "title": "double contour 499x390 inner / 539x430 outer, t=20",
+    "files": [
+      "C:\\Users\\guy42\\Desktop\\RastoPlan\\spikes\\screenshots\\double-full.png",
+      "C:\\Users\\guy42\\Desktop\\RastoPlan\\spikes\\screenshots\\double-corner.png",
+      "C:\\Users\\guy42\\Desktop\\RastoPlan\\spikes\\screenshots\\double-seam.png"
+    ],
+    "placements": 64,
+    "diagnostics": [
+      "auto-paired-contours"
+    ],
+    "flagged": 0,
+    "walls": [
+      {
+        "edgeId": "edge:inner-top",
+        "faceA": [
+          30,
+          469
+        ],
+        "faceB": [
+          -20,
+          519
+        ],
+        "shared": [
+          30,
+          469
+        ],
+        "aligned": true,
+        "rowA": [
+          "R75",
+          "R75",
+          "R75",
+          "timber",
+          "R55",
+          "R75",
+          "R75"
+        ],
+        "rowB": [
+          "R50",
+          "R75",
+          "R75",
+          "R75",
+          "timber",
+          "R55",
+          "R75",
+          "R75",
+          "R50"
+        ]
+      },
+      {
+        "edgeId": "edge:inner-right",
+        "faceA": [
+          30,
+          360
+        ],
+        "faceB": [
+          -20,
+          410
+        ],
+        "shared": [
+          30,
+          360
+        ],
+        "aligned": true,
+        "rowA": [
+          "R75",
+          "R75",
+          "R30",
+          "R75",
+          "R75"
+        ],
+        "rowB": [
+          "R50",
+          "R75",
+          "R75",
+          "R30",
+          "R75",
+          "R75",
+          "R50"
+        ]
+      },
+      {
+        "edgeId": "edge:inner-bottom",
+        "faceA": [
+          30,
+          469
+        ],
+        "faceB": [
+          -20,
+          519
+        ],
+        "shared": [
+          30,
+          469
+        ],
+        "aligned": true,
+        "rowA": [
+          "R75",
+          "R75",
+          "R75",
+          "timber",
+          "R55",
+          "R75",
+          "R75"
+        ],
+        "rowB": [
+          "R50",
+          "R75",
+          "R75",
+          "R75",
+          "timber",
+          "R55",
+          "R75",
+          "R75",
+          "R50"
+        ]
+      },
+      {
+        "edgeId": "edge:inner-left",
+        "faceA": [
+          30,
+          360
+        ],
+        "faceB": [
+          -20,
+          410
+        ],
+        "shared": [
+          30,
+          360
+        ],
+        "aligned": true,
+        "rowA": [
+          "R75",
+          "R75",
+          "R30",
+          "R75",
+          "R75"
+        ],
+        "rowB": [
+          "R50",
+          "R75",
+          "R75",
+          "R30",
+          "R75",
+          "R75",
+          "R50"
+        ]
+      }
+    ]
+  },
+  "lshape": {
+    "title": "L-shaped single contour, t=20",
+    "files": [
+      "C:\\Users\\guy42\\Desktop\\RastoPlan\\spikes\\screenshots\\lshape-full.png",
+      "C:\\Users\\guy42\\Desktop\\RastoPlan\\spikes\\screenshots\\lshape-corner.png",
+      "C:\\Users\\guy42\\Desktop\\RastoPlan\\spikes\\screenshots\\lshape-seam.png"
+    ],
+    "placements": 37,
+    "diagnostics": [],
+    "flagged": 0,
+    "walls": [
+      {
+        "edgeId": "edge:l-0",
+        "faceA": [
+          30,
+          570
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R90",
+          "R75",
+          "R75",
+          "R75",
+          "R75",
+          "R75",
+          "R75"
+        ],
+        "rowB": []
+      },
+      {
+        "edgeId": "edge:l-1",
+        "faceA": [
+          30,
+          270
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R90",
+          "R75",
+          "R75"
+        ],
+        "rowB": []
+      },
+      {
+        "edgeId": "edge:l-2",
+        "faceA": [
+          30,
+          220
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R75",
+          "R40",
+          "R75"
+        ],
+        "rowB": []
+      },
+      {
+        "edgeId": "edge:l-3",
+        "faceA": [
+          30,
+          170
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R75",
+          "R65"
+        ],
+        "rowB": []
+      },
+      {
+        "edgeId": "edge:l-4",
+        "faceA": [
+          30,
+          320
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R75",
+          "R75",
+          "R65",
+          "R75"
+        ],
+        "rowB": []
+      },
+      {
+        "edgeId": "edge:l-5",
+        "faceA": [
+          30,
+          470
+        ],
+        "faceB": null,
+        "shared": null,
+        "aligned": null,
+        "rowA": [
+          "R75",
+          "R75",
+          "R75",
+          "R65",
+          "R75",
+          "R75"
+        ],
+        "rowB": []
+      }
+    ]
+  }
+}

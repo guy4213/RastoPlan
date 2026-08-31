@@ -3,12 +3,15 @@ import {
   ACCESSORY_ITEMS,
   applyQuantityOverrides,
   buildBomTemplate,
+  checkFaceAlignment,
   countAccessoriesByPour,
+  countPanelsByFace,
   countPanelsByPour,
   type AccessoryCount,
   type BomRow,
+  type Diagnostic,
+  type FaceAlignmentIssueKind,
   type PanelCount,
-  type Project,
   type QuantityOverrides,
 } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
@@ -27,11 +30,16 @@ export function QuantitiesPanel() {
     text: string;
   } | null>(null);
 
-  const { accessories, automatic, panels, pourNames, totalPourIds } = useMemo(() => {
+  const { accessories, automatic, panels, panelsByFace, pourNames, totalPourIds } = useMemo(() => {
     const empty = {
       accessories: { byPour: {}, total: emptyAccessory() },
       automatic: { byPour: {}, total: emptyAccessory() },
       panels: { byPour: {}, total: { byType: {}, timberPieces: 0, timberLengthCm: 0 } },
+      panelsByFace: {
+        interior: { byType: {}, timberPieces: 0, timberLengthCm: 0 },
+        exterior: { byType: {}, timberPieces: 0, timberLengthCm: 0 },
+        total: { byType: {}, timberPieces: 0, timberLengthCm: 0 },
+      },
       pourNames: new Map<string, string>(),
       totalPourIds: [] as string[],
     };
@@ -50,20 +58,34 @@ export function QuantitiesPanel() {
       accessories: applyQuantityOverrides(automatic, project.overrides).counts,
       automatic,
       panels: countPanelsByPour(project.placements, project.walls),
+      panelsByFace: countPanelsByFace(project.placements, project.walls),
       pourNames: new Map(project.pours.map((p) => [p.id, p.name])),
       totalPourIds: project.pours.map((p) => p.id),
     };
   }, [project]);
 
   const hasPlacements = project.placements.length > 0 && !!project.layout;
+  const alignment = useMemo(
+    () => checkFaceAlignment(project.placements),
+    [project.placements]
+  );
   // Inventory already has two purpose-built views: individual red placements
   // on the canvas and one aggregated row per missing product below. Repeating
   // the same shortage once per wall face under "engine notes" turns a quantity
   // of three into several nearly identical messages, so that section is kept
   // for geometry/calculation diagnostics only.
-  const diagnostics = (project.layout?.diagnostics ?? []).filter(
-    (diagnostic) => !diagnostic.code.startsWith("inventory-")
-  );
+  const diagnostics: Diagnostic[] = [
+    ...(project.layout?.diagnostics ?? []).filter(
+      (diagnostic) => !diagnostic.code.startsWith("inventory-")
+    ),
+    ...alignment.map((issue) => ({
+      code: `face-alignment-${issue.kind}`,
+      severity: "warning" as const,
+      message: alignmentMessage(issue.kind, issue.edgeId, issue.offsetAlongEdge),
+      wallIds: [],
+      nodeIds: [],
+    })),
+  ];
 
   const bomTemplate = useMemo(
     () =>
@@ -189,12 +211,7 @@ export function QuantitiesPanel() {
           />
 
           <SectionHeader>פאנלים</SectionHeader>
-          <PanelTable
-            perPourIds={totalPourIds}
-            perPour={panels.byPour}
-            total={panels.total}
-            pourNames={pourNames}
-          />
+          <PanelTable counts={panelsByFace} />
         </>
       )}
     </aside>
@@ -392,13 +409,27 @@ const DIAGNOSTIC_COLORS = {
   info: { background: "#e0e7ff", border: "#4f46e5", text: "#3730a3" },
 } as const;
 
+function alignmentMessage(
+  kind: FaceAlignmentIssueKind,
+  edgeId: string,
+  offset: number
+): string {
+  const detail =
+    kind === "panel-type-mismatch"
+      ? "סוגי הפאנלים בשתי הפאות אינם זהים"
+      : kind === "missing-opposite"
+        ? "חסר פאנל מקביל בפאה הנגדית"
+        : "תפרי הפאנלים בשתי הפאות אינם מיושרים";
+  return `${detail} בקצה ${edgeId}, בהיסט ${Math.round(offset * 100) / 100} ס״מ.`;
+}
+
 /**
  * What the engine could not decide on its own. Two contours 30cm apart are a
  * wall or a duct depending on knowledge the drawing doesn't carry, so the
  * pairings it made are listed for the engineer to eyeball rather than trusted
  * silently.
  */
-function Diagnostics({ items }: { items: NonNullable<Project["layout"]>["diagnostics"] }) {
+function Diagnostics({ items }: { items: Diagnostic[] }) {
   const ordered = ["error", "warning", "info"] as const;
   const sorted = [...items].sort(
     (a, b) => ordered.indexOf(a.severity) - ordered.indexOf(b.severity)
@@ -432,25 +463,18 @@ function Diagnostics({ items }: { items: NonNullable<Project["layout"]>["diagnos
 }
 
 function PanelTable({
-  perPourIds,
-  perPour,
-  total,
-  pourNames,
+  counts,
 }: {
-  perPourIds: string[];
-  perPour: Record<string, PanelCount>;
-  total: PanelCount;
-  pourNames: Map<string, string>;
+  counts: { interior: PanelCount; exterior: PanelCount; total: PanelCount };
 }) {
-  const allTypes = Object.keys(total.byType).sort();
+  const allTypes = Object.keys(counts.total.byType).sort();
   return (
     <table style={tableStyle}>
       <thead>
         <tr>
           <th style={thStyle}>סוג</th>
-          {perPourIds.map((id) => (
-            <th key={id} style={thStyle}>{pourNames.get(id) ?? id}</th>
-          ))}
+          <th style={thStyle}>פנים</th>
+          <th style={thStyle}>חוץ</th>
           <th style={{ ...thStyle, background: "#e2e8f0" }}>סה"כ</th>
         </tr>
       </thead>
@@ -458,25 +482,28 @@ function PanelTable({
         {allTypes.map((type) => (
           <tr key={type}>
             <td style={tdLabelStyle}>{type}</td>
-            {perPourIds.map((id) => (
-              <td key={id} style={tdStyle}>{perPour[id]?.byType[type] ?? 0}</td>
-            ))}
-            <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>{total.byType[type] ?? 0}</td>
+            <td style={tdStyle}>{counts.interior.byType[type] ?? 0}</td>
+            <td style={tdStyle}>{counts.exterior.byType[type] ?? 0}</td>
+            <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>
+              {counts.total.byType[type] ?? 0}
+            </td>
           </tr>
         ))}
         <tr>
           <td style={tdLabelStyle}>עץ (חתיכות)</td>
-          {perPourIds.map((id) => (
-            <td key={id} style={tdStyle}>{perPour[id]?.timberPieces ?? 0}</td>
-          ))}
-          <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>{total.timberPieces}</td>
+          <td style={tdStyle}>{counts.interior.timberPieces}</td>
+          <td style={tdStyle}>{counts.exterior.timberPieces}</td>
+          <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>
+            {counts.total.timberPieces}
+          </td>
         </tr>
         <tr>
           <td style={tdLabelStyle}>עץ (ס"מ)</td>
-          {perPourIds.map((id) => (
-            <td key={id} style={tdStyle}>{perPour[id]?.timberLengthCm ?? 0}</td>
-          ))}
-          <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>{total.timberLengthCm}</td>
+          <td style={tdStyle}>{counts.interior.timberLengthCm}</td>
+          <td style={tdStyle}>{counts.exterior.timberLengthCm}</td>
+          <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>
+            {counts.total.timberLengthCm}
+          </td>
         </tr>
       </tbody>
     </table>
