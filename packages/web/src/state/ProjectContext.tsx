@@ -38,21 +38,6 @@ const ManagerCtx = createContext<ProjectManagerValue | null>(null);
 
 const storage = storageProvider;
 
-export const AUTO_COMPUTE_DELAY_MS = 300;
-
-/** Shared by the provider effect and its fake-timer regression tests. */
-export function scheduleAutoCompute(
-  layoutDirty: boolean,
-  dispatch: (action: Action) => void
-): () => void {
-  if (!layoutDirty) return () => undefined;
-  const timer = globalThis.setTimeout(
-    () => dispatch({ type: "compute" }),
-    AUTO_COMPUTE_DELAY_MS
-  );
-  return () => globalThis.clearTimeout(timer);
-}
-
 function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}-${Date.now().toString(36)}`;
 }
@@ -107,14 +92,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setReady(true);
     });
   }, []);
-
-  // Geometry and inventory edits clear the stale layout and set layoutDirty.
-  // Recompute after the edit burst, while manual placement/quantity edits stay
-  // untouched because those actions deliberately leave layoutDirty false.
-  useEffect(() => {
-    if (!ready) return;
-    return scheduleAutoCompute(state.ui.layoutDirty, dispatch);
-  }, [ready, state.ui.layoutDirty, state.project.walls, state.project.inventory]);
 
   // Debounced auto-save on every project change, but only after the initial
   // load — otherwise the seed project overwrites the real one before it

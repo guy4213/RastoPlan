@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Point, Project, Wall } from "@rastoplan/core";
 import {
   DEFAULT_ACCESSORY_RULES,
@@ -9,7 +9,6 @@ import {
 } from "@rastoplan/core";
 import type { Action, AppState } from "./project.js";
 import { initialAppState, initialProject, reduce } from "./project.js";
-import { AUTO_COMPUTE_DELAY_MS, scheduleAutoCompute } from "./ProjectContext.js";
 
 /** The 400x300 room traced as two contours `t` apart, as the user would draw it. */
 function twoContourRoom(t: number, pourId = "pour-1"): Wall[] {
@@ -60,8 +59,6 @@ function run(state: AppState, ...actions: Action[]): AppState {
 function wallIn(state: AppState, id: string): Wall {
   return state.project.walls.find((w) => w.id === id)!;
 }
-
-afterEach(() => vi.useRealTimers());
 
 describe("new projects", () => {
   it("start without drawing, layout, inventory, or quantity overrides", () => {
@@ -118,45 +115,61 @@ describe("new projects", () => {
   });
 });
 
-describe("automatic compute", () => {
-  it("computes a geometry edit after the 300ms debounce", () => {
-    vi.useFakeTimers();
-    let state = run(stateWith([]), {
+describe("manual compute control", () => {
+  it("does not compute a geometry edit until the user explicitly asks", () => {
+    const edited = run(stateWith([]), {
       type: "add-wall",
       a: { x: 0, y: 0 },
       b: { x: 400, y: 0 },
     });
-    const cancel = scheduleAutoCompute(state.ui.layoutDirty, (action) => {
-      state = reduce(state, action);
-    });
 
-    vi.advanceTimersByTime(AUTO_COMPUTE_DELAY_MS - 1);
-    expect(state.project.layout).toBeUndefined();
+    expect(edited.project.layout).toBeUndefined();
+    expect(edited.project.placements).toEqual([]);
+    expect(edited.ui.layoutDirty).toBe(true);
 
-    vi.advanceTimersByTime(1);
-    expect(state.project.layout).toBeDefined();
-    expect(state.ui.layoutDirty).toBe(false);
-    cancel();
+    const computed = reduce(edited, { type: "compute" });
+    expect(computed.project.layout).toBeDefined();
+    expect(computed.ui.layoutDirty).toBe(false);
   });
 
-  it("does not compute a quantity override and preserves the decision", () => {
-    vi.useFakeTimers();
-    let state = run(stateWith(twoContourRoom(20)), { type: "compute" });
-    const layout = state.project.layout;
-    state = reduce(state, {
+  it("preserves the current layout when only a quantity override changes", () => {
+    const before = run(stateWith(twoContourRoom(20)), { type: "compute" });
+    const after = reduce(before, {
       type: "set-quantity-override",
       field: "cornerClamps",
       pourId: "pour-1",
       value: 17,
     });
-    const cancel = scheduleAutoCompute(state.ui.layoutDirty, (action) => {
-      state = reduce(state, action);
+
+    expect(after.project.layout).toBe(before.project.layout);
+    expect(after.project.overrides?.cornerClamps?.["pour-1"]).toBe(17);
+  });
+
+  it("stays uncomputed after deleting and restoring a room side", () => {
+    const reopened = run(
+      stateWith(twoContourRoom(20)),
+      { type: "compute" },
+      { type: "delete-wall", wallId: "out-bottom" }
+    );
+
+    expect(reopened.project.layout).toBeUndefined();
+    expect(reopened.project.placements).toEqual([]);
+    expect(reopened.ui.layoutDirty).toBe(true);
+
+    const closedAgain = reduce(reopened, {
+      type: "add-wall",
+      a: { x: -20, y: -20 },
+      b: { x: 420, y: -20 },
     });
 
-    vi.advanceTimersByTime(AUTO_COMPUTE_DELAY_MS);
-    expect(state.project.layout).toBe(layout);
-    expect(state.project.overrides?.cornerClamps?.["pour-1"]).toBe(17);
-    cancel();
+    expect(closedAgain.project.layout).toBeUndefined();
+    expect(closedAgain.project.placements).toEqual([]);
+    expect(closedAgain.ui.layoutDirty).toBe(true);
+
+    const computed = reduce(closedAgain, { type: "compute" });
+    expect(computed.project.layout).toBeDefined();
+    expect(computed.project.placements.length).toBeGreaterThan(0);
+    expect(computed.ui.layoutDirty).toBe(false);
   });
 });
 

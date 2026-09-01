@@ -607,7 +607,14 @@ export function reduce(state: AppState, action: Action): AppState {
             placements: [],
           })
         ),
-        ui: { ...state.ui, layoutDirty: true, selectedWallId: null, selectedWallIds: [] },
+        // Deletion cancels the current calculation. The dirty marker only asks
+        // the user to press "compute"; ProjectContext never computes by itself.
+        ui: {
+          ...state.ui,
+          layoutDirty: survivingWalls.length > 0,
+          selectedWallId: null,
+          selectedWallIds: [],
+        },
       };
     }
     case "weld-endpoints": {
