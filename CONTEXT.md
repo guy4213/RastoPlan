@@ -7,8 +7,8 @@ conventions, and current milestone — without re-deriving them from scratch.
 ## What this is
 
 A web app for RASTO (formwork/concrete-pour engineering) that lets an
-engineer lay out walls for a "pour" (יציקה), auto-tiles them with formwork
-panels according to RASTO's engineering rules, and computes the accessories
+engineer lay out walls for a "pour" (יציקה), tile them with formwork panels
+on an explicit **חשב** action, and compute the accessories
 (clamps, dywidag rods, struts, etc.) needed. Two deliverables per project:
 a visual layout (canvas) and an export (PDF/Excel) for the field crew.
 
@@ -23,16 +23,20 @@ a visual layout (canvas) and an export (PDF/Excel) for the field crew.
                      editor, pour manager UI, project list, config screens,
                      client-side PDF export.
 /packages/server     Node.js + Fastify + TypeScript. REST API
-                     (/api/projects), shared-password auth, static serving
-                     of the built web app.
+                     (/api/projects), per-user cookie-session auth, Postgres
+                     ownership isolation, and health endpoints.
 ```
 
 `web` and `server` both depend on `core` as a pnpm workspace dependency
 (`workspace:*`). `core` depends on nothing outside itself — this is a hard
 rule, not a suggestion (see "Core purity" below).
 
-Deployment target: Render (Web Service for server+static, Managed Postgres).
-Not wired up yet — lands in Milestone 3.
+The current Vercel project builds only the static web app; it does not host the
+Fastify API and currently has no environment variables. A working deployment
+therefore still needs a backend deployment, a real `VITE_API_BASE_URL` for the web build, and
+`DATABASE_URL`, `WEB_ORIGIN`, and `AUTH_SECRET` as server/deployment secrets.
+Production is not considered closed: no real Neon + browser end-to-end run has
+been completed yet.
 
 ## Core purity — the most important convention
 
@@ -86,6 +90,15 @@ the field crew wrong numbers and it's a physical, on-site problem.
 - Two real customer layouts will serve as **golden tests** once tiling is
   implemented — output gets diffed against them during tuning.
 
+### Manual compute policy
+
+The user's latest decision overrides the original Milestone 2/Stage 5
+auto-compute plan: `tileProject` / `compute` run only after an explicit click
+on **חשב**. Geometry changes, deletion, undo/restore of a side, and closing a
+room may clear the current layout or mark `layoutDirty`, but must never start
+the engine through an effect, timer, or debounce. Restored panels appear only
+after the user clicks **חשב** again.
+
 ## Storage layer
 
 `StorageProvider` interface (`core/src/storage/StorageProvider.ts`): `list`,
@@ -96,32 +109,42 @@ The interface lives in `core` because it's a pure contract, but the two
 concrete implementations are **not** in `core` — they inherently have side
 effects (browser storage / network), which would violate core purity.
 Both live in `packages/web/src/storage/`:
-- `IndexedDBProvider` — used during early core development and as an
-  offline fallback. Currently a stub (throws "not implemented").
-- `ApiProvider` — talks to `/api/projects`. Lands in Milestone 3. Currently
-  a stub.
+- `ApiProvider` — the normal account-backed mode; talks to `/api/projects`
+  with credentials included.
+- `IndexedDBProvider` — implemented browser-only offline storage. It must be
+  selected explicitly and has no accounts or server synchronization.
 
-Provider selection is config/env driven (`VITE_STORAGE_PROVIDER` — see
-`.env.example`), so swapping implementations is a one-line change
-(`packages/web/src/storage/index.ts`).
+Provider selection is config/env driven in `packages/web/src/storage/index.ts`.
+The default mode is `api`; set `VITE_STORAGE_PROVIDER=indexeddb` explicitly for
+offline use. Local Vite settings belong in `packages/web/.env.local`, including
+a real `VITE_API_BASE_URL` in API mode.
 
-Save model (spec 12.2, for when it's implemented): whole `Project` as one
-atomic JSONB blob, no normalized walls/placements tables. Auto-save
-debounced 3s after edits + explicit Ctrl+S. No version history in MVP.
+The save model stores a whole `Project` as one atomic JSONB blob, with no
+normalized walls/placements tables. Auto-save is debounced after edits and
+flushes before project create/open/remove transitions. No version history in MVP.
+Auto-save persists project state only; it must never invoke `tileProject` or
+`compute`. Auto-save remains enabled, while auto-compute is forbidden.
 
-## Auth (spec 12.3, stubbed until Milestone 3)
+## Auth and project ownership
 
-One shared office password via env var (`OFFICE_PASSWORD`) → simple
-session/JWT. No per-user accounts or roles. All projects are visible to
-everyone who's logged in (one team). Stub lives in
-`packages/server/src/auth/index.ts`.
+Per-user email/password accounts are implemented. The server exposes
+`register`, `login`, `logout`, and `me`, issues a signed HTTP-only session
+cookie, and hashes passwords. `AuthGate` protects the API-backed web app.
+Every project query enforces `user_id` ownership in SQL.
+
+Open registration currently works. A production registration gate or invite
+policy still awaits an explicit user decision; do not invent one. Legacy
+`projects` rows whose `user_id` is `NULL` are not assigned automatically and
+remain unreachable through owned project queries until an operator assigns
+them to a real account. Only then can the database finish enforcing
+`projects.user_id NOT NULL`.
 
 ## Running things
 
 ```bash
 pnpm install
 pnpm dev          # web app, http://localhost:5173
-pnpm dev:server   # API server, http://localhost:3000 (copy .env.example to .env first)
+pnpm dev:server   # API server, http://localhost:3000; reads process/deployment env
 pnpm test         # every package's tests (Vitest in core)
 pnpm lint
 pnpm format
@@ -144,15 +167,15 @@ pnpm typecheck
 
 ## Milestones (spec section 9)
 
-- **Milestone 1** (current): monorepo skeleton, data model types, default
-  config, server skeleton, StorageProvider stubs, test infra. No tiling
-  logic, no geometry, no canvas, no export, no real DB connection.
-- **Milestone 2**: the core engine — geometry, tiling algorithm, accessory
-  calculations, the canvas editor. This is the bulk of the work; work
-  through each engineering rule as function + unit test, in spec order.
-  Don't jump ahead of the spec's rule ordering.
-- **Milestone 3**: `ApiProvider`, the real REST API, Postgres, auth, deploy
-  to Render.
+- **Milestone 1:** complete — monorepo, data model, defaults, storage contract,
+  server/test infrastructure.
+- **Milestone 2:** the core engine, parallel-face tiling, canvas, quantities,
+  diagnostics, and manual **חשב** flow are implemented. Customer engineering
+  questions and full manual acceptance remain separate closure gates.
+- **Milestone 3:** `ApiProvider`, Postgres CRUD, account auth, `AuthGate`, and
+  SQL ownership isolation are implemented in code. Deployment configuration,
+  a real Neon/browser end-to-end run, the registration/invite policy, and
+  assignment of any ownerless legacy projects are still open.
 
 Each milestone is done only when it meets its Definition of Done from the
 spec — not "roughly working."

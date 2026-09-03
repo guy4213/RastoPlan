@@ -57,7 +57,7 @@
 
 # עדיפות ראשונה — הלבשה מקבילה, בחמישה שלבים עם שערי אישור
 
-הסדר נועד למנוע שינוי סימולטני של ההלבשה, הפינות, הכמויות והחישוב האוטומטי. **כל שלב נעצר לאישור לפני הבא.**
+הסדר נועד למנוע שינוי סימולטני של ההלבשה, הפינות, הכמויות ומדיניות הפעלת המנוע. **כל שלב נעצר לאישור לפני הבא.**
 
 ## שלב 0 — קריאה מדויקת של הרפרנס ✅ **בוצע**
 
@@ -128,7 +128,7 @@ export function tileWallPair(input: TileWallPairInput):
 ### מה קפוא בשלב הזה
 
 - **`countDywidagRods` לא נוגעים בו.** הוא סופר תפרים על `faceA` בלבד, ו־[dywidag.ts:18-32](../packages/core/src/accessories/dywidag.ts#L18-L32) + `docs/open-questions.md` §1 מתעדים שכלל הכמות עצמו **לא ידוע** — שלושה מקורות של הלקוח נותנים 1.50 / 0.98 / 0.93 מוטים לפאנל. שינוי הספירה עכשיו יזיז מספר שאיש לא יכול לאמת. בדיקה בשלב 1 מוודאת שסך המוטים **לא זז** מול הפריסה הקודמת.
-- כמויות לפי צד, פינות קעורות, חישוב אוטומטי — לא בשלב הזה.
+- כמויות לפי צד, פינות קעורות ומדיניות הפעלת המנוע — לא בשלב הזה.
 
 ### בדיקות שלב 1
 
@@ -206,7 +206,9 @@ A[34,359] B[0,360]   timber@359 width=1   flags=[gap-out-of-range, face-alignmen
 
 > **שער 4.**
 
-## שלב 5 — חישוב אוטומטי והתרעות
+## שלב 5 — חישוב ידני והתרעות
+
+> **הכרעת משתמש מאוחרת — override לתוכנית המקורית:** מנוע הפריסה אינו רץ אוטומטית. ההחלטה הזו מחליפה את דרישת ה־debounce המקורית של שלב 5.
 
 **קובץ חדש:** `packages/core/src/tiling/faceAlignment.ts`
 
@@ -227,48 +229,56 @@ const alignment = useMemo(() => checkFaceAlignment(project.placements), [project
 
 כך היא רצה מחדש בכל שינוי ב־`placements` — בין אם מגיע מהמנוע ובין אם מעריכה ידנית — בלי לגעת בהלבשה ובלי לדרוס כלום. הממצאים מוצגים לצד `layout.diagnostics` הקיימות באותה רשימת "הערות מנוע", ועל הקנבס כדגל על ה־placement החורג. בבדיקות היחידה קוראים לפונקציה ישירות.
 
-**חישוב אוטומטי** — היום `compute` רץ רק בלחיצה על **חשב** ב־[Toolbar.tsx:186](../packages/web/src/panels/Toolbar.tsx#L186). להוסיף ב־[ProjectContext.tsx](../packages/web/src/state/ProjectContext.tsx) `useEffect` על `ui.layoutDirty` שמפעיל `dispatch({ type: "compute" })` בהשהיה ~300ms; הכפתור נשאר ככפייה ידנית. `update-placement` / `insert-placement` / `delete-placement` / `set-quantity-override` **לא** מדליקים `layoutDirty` היום — מכוון, כדי שעריכות ידניות והכרעות כמות ישרדו. לא לשנות.
+**חישוב ידני בלבד** — `tileProject` / `compute` רצים רק בעקבות לחיצה מפורשת על **חשב** ב־[Toolbar.tsx](../packages/web/src/panels/Toolbar.tsx). אסור ל־`useEffect`, לטיימר או ל־debounce להפעיל `dispatch({ type: "compute" })` בעקבות `ui.layoutDirty`.
+
+כל שינוי גיאומטריה — ובפרט מחיקת קיר, ביטול המחיקה, החזרת צלע או סגירת חדר מחדש — רק מנקה את הפריסה הקיימת או מסמן `layoutDirty`, לפי פעולת ה־state המתאימה. אף אחת מהפעולות האלה אינה מחזירה תבניות בעצמה. לאחר שינוי כזה המשתמש לוחץ **חשב** כדי להפיק פריסה חדשה. `update-placement` / `insert-placement` / `delete-placement` / `set-quantity-override` ממשיכים לא להפעיל חישוב מחדש, כדי שעריכות ידניות והכרעות כמות ישרדו.
+
+ה־auto-save של הפרויקט נשאר פעיל ואינו קשור למדיניות החישוב: מותר לשמור אוטומטית קירות, `layoutDirty` ועריכות, אבל שמירה לעולם אינה מפעילה `tileProject` / `compute`.
 
 בדיקות:
 
 - `packages/core/src/tiling/__tests__/faceAlignment.test.ts` — פריסה תקינה → 0 ממצאים; הזזה ידנית של פאנל אחד → ממצא אחד בהיסט הנכון.
 - `packages/web/src/state/project.test.ts` — אחרי `update-placement`, `project.layout` **לא** השתנה (העריכה שרדה) אבל `checkFaceAlignment` על ה־`placements` המעודכנים כן מחזיר ממצא. זו הבדיקה שמוכיחה שההתרעה עובדת בלי ריצוף מחדש.
+- `packages/web/src/state/project.test.ts` — אחרי חישוב, מחיקת צלע מנקה את הפריסה; ביטול המחיקה או סגירת החדר מחדש אינם מחזירים תבניות; רק פעולת `compute` מפורשת מחזירה אותן.
 
 ---
 
-# עדיפות שנייה — תקלות בפרויקט חדש
+# עדיפות שנייה — תקלות בפרויקט חדש ✅ **בוצע בקוד**
 
-התקלה שדווחה (חשב לא עושה כלום בפרויקט חדש) **כבר תוקנה** בקומיט `e610a4c` — החסימה `thicknessSet === false` הוסרה מ־`compute`. אם התופעה עדיין נראית, קודם לוודא שהבילד/הדיפלוי מעודכן. מה שנשאר תקול:
-
-1. **אובדן עריכות במעבר בין פרויקטים** — [ProjectContext.tsx:91-107](../packages/web/src/state/ProjectContext.tsx#L91-L107) שומר בהשהיה של 300ms, וה־cleanup מבטל את הטיימר בכל החלפת `state.project`. `create`/`open`/`remove` מפיצים `load-project` מיד, ולכן השמירה הממתינה של הפרויקט **הקודם** מבוטלת. מהמשתמש זה נראה בדיוק כמו "פתחתי פרויקט חדש והחישובים נעלמו".
-   **תיקון:** `flushSave()` שנקרא במפורש בתחילת `create` / `open` / `remove`, לפני ה־`dispatch`.
-2. **פעולת איפוס מפורשת** — אין `new-project` ב־reducer; פרויקט חדש נבנה בחוץ ונכנס דרך `load-project`, שמשמר `ui.tool`, `ui.view`, `ui.units`, `ui.orthoLock`. להוסיף `case "new-project"` שמאפס גם את המצלמה, את הכלי הפעיל, את ה־notice ואת כל הבחירות.
-3. **כותב מת של `thicknessSet: false`** — [Walls.tsx:118](../packages/web/src/canvas/Walls.tsx#L118) עדיין מפיץ אותו ב־Escape, ו־`withHealedThickness` אז מאפס את הקיר ל־20 ס״מ בלי קשר לערך האמיתי. כרגע לא־ניתן־להגעה; למחוק.
-4. **ברירות מחדל משותפות** — [project.ts:105-106](../packages/web/src/state/project.ts#L105-L106) מקצה `DEFAULT_PANEL_CATALOG` / `DEFAULT_ACCESSORY_RULES` **בהפניה**; כתיבה אחת במקום מזהמת כל פרויקט בסשן. לשכפל עמוק.
-5. **`packages/core/dist/` מקומט ב־git** ב־`ENGINE_VERSION = 9` מול `src` ב־11. ל־`.gitignore` והסרה מהמעקב.
-
-**בדיקות חדשות ב־`packages/web/src/state/project.test.ts`** (אין שם היום ולו בדיקה אחת ל־`initialProject` או למעבר בין פרויקטים): פרויקט חדש מתחיל ריק; `new-project` מאפס את `ui.view`; שרשור צייר־קיר → צור־חדש → פתח־ישן משמר את הקיר.
+- `flushSave()` שומר עריכה ממתינה לפני `create` / `open` / `remove`, בלי ליצור מחדש פרויקט שנמחק.
+- פעולת `new-project` מאפסת את מצב ה־UI והמצלמה.
+- הכותב המת של `thicknessSet: false` הוסר וברירות המחדל משוכפלות עמוק לכל פרויקט.
+- שינויי גיאומטריה אינם מפעילים compute אוטומטי; מדיניות **חשב** הידנית של שלב 5 נשארת הקובעת.
+- בדיקות ה־state מכסות פרויקט חדש נקי, איפוס UI ושימור הפרויקט הישן במעבר מהיר.
 
 ---
 
-# עדיפות שלישית — פרויקטים ושמירה (Postgres)
+# עדיפות שלישית — פרויקטים ושמירה (Postgres) ✅ **בוצע בקוד**
 
-השלד קיים ומקוצר: Fastify עם `projectRoutes` שכולם 501, `createDatabase()` שזורק, ו־`ApiProvider` שכל מתודה בו זורקת.
-
-- **`packages/server/src/db/index.ts`** — `createDatabase()` מעל `pg` Pool מ־`DATABASE_URL`. סכמה: `users`, `projects(id, user_id, name, created_at, updated_at, data jsonb)`. ה־`Project` נשמר כ־`jsonb` — הוא כבר עובר `migrateProject` עם `CURRENT_SCHEMA_VERSION`, ואין סיבה לפרק לטבלאות. אינדקס על `(user_id, updated_at desc)`.
-- **`packages/server/src/routes/projects.ts`** — חמשת ה־handlers מול חוזה [StorageProvider](../packages/core/src/storage/StorageProvider.ts) הקיים. שמירה מריצה `migrateProject` בצד השרת.
-- **`packages/web/src/storage/ApiProvider.ts`** — `fetch` מול אותו חוזה, `credentials: "include"`.
-- **[ProjectContext.tsx:35](../packages/web/src/state/ProjectContext.tsx#L35)** — מייצר `new IndexedDBProvider()` ישירות, ולכן המתג ב־`packages/web/src/storage/index.ts` הוא קוד מת. להחליף ל־`storageProvider` ולהפעיל את `VITE_STORAGE_PROVIDER`.
-- **שמירה אוטומטית** — ה־debounce הקיים נשמר, בתוספת `flushSave` מעדיפות 2 ומחוון מצב ("נשמר" / "שומר…") בסרגל.
+- שרת Fastify משתמש ב־Postgres דרך `DATABASE_URL`; הפרויקט נשמר כ־JSONB ועובר `migrateProject` בשמירה.
+- נתיבי list/load/save/duplicate/remove מממשים את חוזה [StorageProvider](../packages/core/src/storage/StorageProvider.ts).
+- `ApiProvider` ממומש עם `credentials: "include"`; מצב web רגיל הוא `api`, ו־`indexeddb` הוא מצב offline מפורש בלבד.
+- ה־auto-save ומחוון השמירה נשארים פעילים, עם `flushSave` במעברים. הם אינם מפעילים את מנוע הפריסה.
 
 ---
 
-# עדיפות רביעית — הרשמה והתחברות
+# עדיפות רביעית — הרשמה והתחברות ✅ **בוצע בקוד**
 
-- **`packages/server/src/auth/`** — להחליף את `verifyOfficePassword` הזורק ב־`register` / `login` / `logout` עם `argon2`, ועוגיית סשן חתומה (`@fastify/cookie` + `@fastify/session`, סוד מ־`AUTH_SECRET`). `OFFICE_PASSWORD` יורד מ־`.env.example`.
-- **בידוד** — כל שאילתה ב־`projects.ts` מסוננת ב־`WHERE user_id = $session.userId`. נאכף ב־SQL ולא בקוד הקריאה, כדי שלא ייפרץ בהוספת נתיב.
-- **מסכים** ב־`packages/web/src/panels/` — `LoginPage.tsx`, `RegisterPage.tsx`, ומעטפת `AuthGate` סביב `App.tsx`. אין ראוטר בפרויקט; מספיק מתג מצב, בלי תלות חדשה. RTL ואותה שפה ויזואלית של `ProjectsModal.tsx`.
-- **מצב לא־מחובר** — IndexedDB נשאר גיבוי מקומי; אחרי התחברות ראשונה מוצעת העלאה של פרויקטים מקומיים לחשבון.
+- השרת מממש `register` / `login` / `logout` / `me`, סיסמאות מגובבות ועוגיית סשן חתומה ב־`AUTH_SECRET`.
+- כל שאילתות הפרויקטים מסוננות ב־SQL לפי `user_id` של הסשן.
+- `LoginPage`, `RegisterPage` ו־`AuthGate` מחוברים לאפליקציה במצב API. מצב `indexeddb` הוא offline מפורש וללא חשבונות.
+
+## מה עדיין פתוח לפני סגירת production
+
+הפריסה הנוכחית ב־Vercel היא frontend סטטי בלבד, ללא משתני סביבה וללא Fastify API פעיל מאחוריו.
+
+1. **תצורת web:** לבנות עם `VITE_API_BASE_URL` אמיתי. לפיתוח מקומי Vite קורא את `packages/web/.env.local`.
+2. **סודות שרת:** לספק ל־process/deployment את `DATABASE_URL`,‏ `WEB_ORIGIN` ו־`AUTH_SECRET`; אין להניח שקובץ `.env` בשורש נטען אוטומטית.
+3. **E2E אמיתי:** עדיין לא בוצע תרחיש מלא בדפדפן מול Neon אמיתי — הרשמה, session, CRUD, רענון ובידוד שני משתמשים.
+4. **מדיניות הרשמה:** ההרשמה הפתוחה עובדת, אבל gate/invite ל־production ממתין להחלטת משתמש. לא להמציא מדיניות.
+5. **פרויקטים ישנים ללא בעלים:** שורות עם `projects.user_id IS NULL` אינן משויכות אוטומטית ואינן נגישות דרך שאילתות המשתמש. צריך לשייך אותן לחשבון אמיתי לפני החלת `NOT NULL` מלאה.
+
+לכן הקוד קיים, אבל production עדיין אינו שער סגור.
 
 ---
 
@@ -291,4 +301,5 @@ pnpm --filter @rastoplan/core test -- tileWallPair faceAlignment
 | 5 | אורך 437 → העץ באותו מקום בשני הצדדים | 1 |
 | 6 | פאנל "כמויות" מול הקנבס: מספר ה־R75 בטבלה = מספר המלבנים המצוירים | 4 |
 | 7 | הזזה ידנית של פאנל → מופיעה התרעת אי־התאמה ב"הערות מנוע" | 5 |
-| 8 | צור פרויקט חדש מיד אחרי ציור קיר → הקיר נשמר בישן, החדש נפתח ריק ומאופס | עדיפות 2 |
+| 8 | מחק צלע אחרי חישוב, החזר וסגור את החדר → התבניות אינן חוזרות עד לחיצה על **חשב** | 5 |
+| 9 | צור פרויקט חדש מיד אחרי ציור קיר → הקיר נשמר בישן, החדש נפתח ריק ומאופס | עדיפות 2 |

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { AUTH_ENABLED, me, type Account } from "../auth/api.js";
+import {
+  AUTH_CONFIGURATION_ERROR,
+  AUTH_ENABLED,
+  logout,
+  me,
+  type Account,
+} from "../auth/api.js";
 import { LoginPage } from "./LoginPage.js";
 import { RegisterPage } from "./RegisterPage.js";
 import { authPageStyles } from "./authStyles.js";
@@ -8,6 +14,7 @@ type Phase =
   | { kind: "checking" }
   | { kind: "signed-out"; screen: "login" | "register" }
   | { kind: "signed-in"; account: Account }
+  | { kind: "configuration-error"; message: string }
   | { kind: "unreachable"; message: string };
 
 /**
@@ -22,12 +29,18 @@ type Phase =
  * perform.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [phase, setPhase] = useState<Phase>(
-    AUTH_ENABLED ? { kind: "checking" } : { kind: "signed-in", account: { id: "local", email: "" } }
+    AUTH_CONFIGURATION_ERROR
+      ? { kind: "configuration-error", message: AUTH_CONFIGURATION_ERROR }
+      : AUTH_ENABLED
+        ? { kind: "checking" }
+        : { kind: "signed-in", account: { id: "local", email: "" } }
   );
 
   const check = useCallback(() => {
-    if (!AUTH_ENABLED) return;
+    if (!AUTH_ENABLED || AUTH_CONFIGURATION_ERROR) return;
     setPhase({ kind: "checking" });
     void me()
       .then((account) =>
@@ -40,7 +53,70 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   useEffect(check, [check]);
 
-  if (phase.kind === "signed-in") return <>{children}</>;
+  if (phase.kind === "signed-in") {
+    if (!AUTH_ENABLED) return <>{children}</>;
+
+    const handleLogout = async () => {
+      setLogoutError(null);
+      setLoggingOut(true);
+      try {
+        await logout();
+        setPhase({ kind: "signed-out", screen: "login" });
+      } catch (err) {
+        setLogoutError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoggingOut(false);
+      }
+    };
+
+    return (
+      <>
+        <div
+          dir="rtl"
+          style={{
+            position: "fixed",
+            insetBlockStart: 8,
+            insetInlineEnd: 12,
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "5px 8px",
+            border: "1px solid #cbd5e1",
+            borderRadius: 6,
+            background: "#fff",
+            boxShadow: "0 2px 8px rgba(15, 23, 42, 0.08)",
+            fontFamily: "system-ui, -apple-system, Segoe UI, Arial, sans-serif",
+            fontSize: 12,
+          }}
+        >
+          <span>{phase.account.email}</span>
+          <button
+            type="button"
+            disabled={loggingOut}
+            onClick={() => void handleLogout()}
+            style={{
+              border: "none",
+              background: "none",
+              color: "#1d4ed8",
+              cursor: loggingOut ? "wait" : "pointer",
+              fontFamily: "inherit",
+              fontSize: 12,
+              padding: 0,
+            }}
+          >
+            {loggingOut ? "מתנתק…" : "התנתקות"}
+          </button>
+          {logoutError && (
+            <span role="alert" style={{ color: "#b91c1c" }}>
+              {logoutError}
+            </span>
+          )}
+        </div>
+        {children}
+      </>
+    );
+  }
 
   const s = authPageStyles;
 
@@ -48,6 +124,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <div dir="rtl" style={s.page}>
         <p style={s.subtitle}>טוען…</p>
+      </div>
+    );
+  }
+
+  if (phase.kind === "configuration-error") {
+    return (
+      <div dir="rtl" style={s.page}>
+        <div style={s.card}>
+          <h1 style={s.title}>נדרשת הגדרת שרת</h1>
+          <p role="alert" style={s.error}>
+            {phase.message}
+          </p>
+        </div>
       </div>
     );
   }

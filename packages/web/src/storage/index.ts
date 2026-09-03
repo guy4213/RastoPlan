@@ -1,20 +1,16 @@
 import type { StorageProvider } from "@rastoplan/core";
+import { clientConfig } from "../auth/config.js";
 import { IndexedDBProvider } from "./IndexedDBProvider.js";
 import { ApiProvider } from "./ApiProvider.js";
 
 export type { StorageProvider, ProjectMeta } from "@rastoplan/core";
 
-// Provider selection is a one-line config change (spec 12.1), driven by env.
 function createStorageProvider(): StorageProvider {
-  const kind = import.meta.env.VITE_STORAGE_PROVIDER ?? "indexeddb";
-
-  switch (kind) {
+  switch (clientConfig.storageMode) {
     case "api":
-      return new ApiProvider(import.meta.env.VITE_API_BASE_URL ?? "");
+      return new ApiProvider(clientConfig.apiBaseUrl);
     case "indexeddb":
       return new IndexedDBProvider();
-    default:
-      throw new Error(`Unknown VITE_STORAGE_PROVIDER: ${kind}`);
   }
 }
 

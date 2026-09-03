@@ -1,12 +1,8 @@
-/**
- * Account endpoints, kept out of the storage providers on purpose: signing in
- * is not part of the `StorageProvider` contract, and IndexedDB mode has no
- * server to sign in to.
- */
-const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
+import { clientConfig, MISSING_API_URL_MESSAGE } from "./config.js";
 
 /** Auth only exists when the app talks to the API; local storage mode has no accounts. */
-export const AUTH_ENABLED = (import.meta.env.VITE_STORAGE_PROVIDER ?? "indexeddb") === "api";
+export const AUTH_ENABLED = clientConfig.storageMode === "api";
+export const AUTH_CONFIGURATION_ERROR = clientConfig.configurationError;
 
 export interface Account {
   id: string;
@@ -14,14 +10,6 @@ export interface Account {
 }
 
 export class AuthError extends Error {}
-
-async function request(path: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  headers.set("Accept", "application/json");
-  if (init?.body !== undefined) headers.set("Content-Type", "application/json");
-
-  return fetch(`${baseUrl}${path}`, { ...init, headers, credentials: "include" });
-}
 
 async function readError(response: Response): Promise<string> {
   const body = await response.text();
@@ -35,31 +23,90 @@ async function readError(response: Response): Promise<string> {
   return body.trim();
 }
 
-async function submitCredentials(path: string, email: string, password: string): Promise<Account> {
-  const response = await request(path, {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-  if (!response.ok) throw new AuthError(await readError(response));
-  return (await response.json()) as Account;
+export interface AuthApi {
+  register(credentials: RegisterCredentials): Promise<Account>;
+  login(email: string, password: string): Promise<Account>;
+  logout(): Promise<void>;
+  me(): Promise<Account | undefined>;
 }
 
-export function register(email: string, password: string): Promise<Account> {
-  return submitCredentials("/api/auth/register", email, password);
+export interface RegisterCredentials {
+  email: string;
+  password: string;
+  registrationCode?: string;
 }
 
-export function login(email: string, password: string): Promise<Account> {
-  return submitCredentials("/api/auth/login", email, password);
+export function createAuthApi(baseUrl: string, fetchImplementation: typeof fetch = fetch): AuthApi {
+  const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
+
+  async function request(path: string, init?: RequestInit): Promise<Response> {
+    if (!normalizedBaseUrl) throw new AuthError(MISSING_API_URL_MESSAGE);
+
+    const headers = new Headers(init?.headers);
+    headers.set("Accept", "application/json");
+    if (init?.body !== undefined) headers.set("Content-Type", "application/json");
+
+    return fetchImplementation(`${normalizedBaseUrl}${path}`, {
+      ...init,
+      headers,
+      credentials: "include",
+    });
+  }
+
+  async function readAccount(response: Response): Promise<Account> {
+    if (!response.ok) throw new AuthError(await readError(response));
+
+    const value = (await response.json()) as unknown;
+    if (!isAccount(value)) {
+      throw new AuthError("השרת החזיר תשובת משתמש לא תקינה");
+    }
+    return value;
+  }
+
+  async function submitCredentials(path: string, email: string, password: string): Promise<Account> {
+    return readAccount(
+      await request(path, {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      })
+    );
+  }
+
+  return {
+    register: async (credentials) => {
+      const response = await request("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify(credentials),
+      });
+      return readAccount(response);
+    },
+    login: (email, password) => submitCredentials("/api/auth/login", email, password),
+    async logout() {
+      const response = await request("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new AuthError(await readError(response));
+    },
+    async me() {
+      const response = await request("/api/auth/me");
+      if (response.status === 401) return undefined;
+      return readAccount(response);
+    },
+  };
 }
 
-export async function logout(): Promise<void> {
-  await request("/api/auth/logout", { method: "POST" });
-}
+const authApi = createAuthApi(clientConfig.apiBaseUrl);
 
-/** Resolves the signed-in account, or undefined when there is no valid session. */
-export async function me(): Promise<Account | undefined> {
-  const response = await request("/api/auth/me");
-  if (response.status === 401) return undefined;
-  if (!response.ok) throw new AuthError(await readError(response));
-  return (await response.json()) as Account;
+export const register = authApi.register;
+export const login = authApi.login;
+export const logout = authApi.logout;
+export const me = authApi.me;
+
+function isAccount(value: unknown): value is Account {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    "email" in value &&
+    typeof value.email === "string"
+  );
 }

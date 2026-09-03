@@ -1,4 +1,5 @@
 import type { Project, ProjectMeta, StorageProvider } from "@rastoplan/core";
+import { MISSING_API_URL_MESSAGE } from "../auth/config.js";
 
 export class ApiProvider implements StorageProvider {
   private readonly baseUrl: string;
@@ -52,6 +53,8 @@ export class ApiProvider implements StorageProvider {
   }
 
   private async request(path: string, init?: RequestInit): Promise<Response> {
+    if (!this.baseUrl) throw new Error(MISSING_API_URL_MESSAGE);
+
     const headers = new Headers(init?.headers);
     headers.set("Accept", "application/json");
     if (init?.body !== undefined && !headers.has("Content-Type")) {

@@ -3,6 +3,8 @@ import test from "node:test";
 import { buildApp } from "../app.js";
 import type { Database } from "../db/index.js";
 import { hashPassword, verifyPassword } from "../auth/index.js";
+import { requireAuthSecret } from "../config.js";
+import { SESSION_MAX_AGE_SECONDS } from "./auth.js";
 
 interface StoredUser {
   id: string;
@@ -60,6 +62,21 @@ test("a stored hash verifies only against the original password", async () => {
 test("a corrupt stored hash fails the login instead of throwing", async () => {
   assert.equal(await verifyPassword(PASSWORD, "not-a-hash"), false);
   assert.equal(await verifyPassword(PASSWORD, "scrypt$a$b$c$d$e"), false);
+  assert.equal(
+    await verifyPassword(PASSWORD, `scrypt$1073741824$8$1$${Buffer.alloc(16).toString("base64")}$${Buffer.alloc(64).toString("base64")}`),
+    false
+  );
+  assert.equal(
+    await verifyPassword(PASSWORD, `scrypt$32768$8$1$${Buffer.alloc(16).toString("base64")}$${Buffer.alloc(65).toString("base64")}`),
+    false
+  );
+  assert.equal(await verifyPassword(PASSWORD, `scrypt$32768$8$1$${"A".repeat(513)}$x`), false);
+});
+
+test("rejects the documented AUTH_SECRET placeholder", () => {
+  assert.throws(() => requireAuthSecret("change-me-to-at-least-32-characters-long"), /placeholder/);
+  assert.throws(() => requireAuthSecret("too-short"), /at least 32/);
+  assert.equal(requireAuthSecret("a-unique-test-secret-that-is-long-enough"), "a-unique-test-secret-that-is-long-enough");
 });
 
 test("registering issues an http-only session and identifies the user", async () => {
@@ -75,6 +92,20 @@ test("registering issues an http-only session and identifies the user", async ()
     const session = registered.cookies.find((entry) => entry.name === "rasto_session");
     assert.ok(session);
     assert.equal(session.httpOnly, true);
+    assert.equal(session.sameSite, "Lax");
+    assert.equal(session.maxAge, SESSION_MAX_AGE_SECONDS);
+
+    const unsigned = app.unsignCookie(session.value);
+    assert.equal(unsigned.valid, true);
+    assert.ok(unsigned.value);
+    const payload = JSON.parse(Buffer.from(unsigned.value, "base64url").toString("utf8")) as {
+      v: number;
+      userId: string;
+      issuedAt: number;
+    };
+    assert.equal(payload.v, 1);
+    assert.equal(payload.userId, (registered.json() as { id: string }).id);
+    assert.ok(Number.isInteger(payload.issuedAt));
     // The address is stored normalised so a differently-cased login still matches.
     assert.equal((registered.json() as { email: string }).email, "owner@example.com");
 
@@ -192,6 +223,40 @@ test("a forged session cookie is not accepted", async () => {
     await app.close();
   }
 });
+
+test("expired, future, wrong-version and malformed signed sessions are rejected", async () => {
+  const app = appForTest();
+  try {
+    const registered = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { email: "owner@example.com", password: PASSWORD },
+    });
+    const userId = (registered.json() as { id: string }).id;
+    const now = Math.floor(Date.now() / 1000);
+    const invalidValues = [
+      sessionValue(userId, now - SESSION_MAX_AGE_SECONDS),
+      sessionValue(userId, now + 60),
+      sessionValue(userId, now, 2),
+      "not-json",
+    ];
+
+    for (const value of invalidValues) {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/auth/me",
+        headers: { cookie: `rasto_session=${app.signCookie(value)}` },
+      });
+      assert.equal(response.statusCode, 401);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+function sessionValue(userId: string, issuedAt: number, version = 1): string {
+  return Buffer.from(JSON.stringify({ v: version, userId, issuedAt }), "utf8").toString("base64url");
+}
 
 test("logout clears the session", async () => {
   const app = appForTest();

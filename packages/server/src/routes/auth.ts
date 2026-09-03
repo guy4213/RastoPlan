@@ -11,7 +11,10 @@ import {
 } from "../auth/index.js";
 
 export const SESSION_COOKIE = "rasto_session";
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const SESSION_VERSION = 1;
+const MAX_SESSION_VALUE_LENGTH = 512;
+const MAX_USER_ID_LENGTH = 128;
 
 export interface AuthRouteOptions {
   database: Database;
@@ -40,7 +43,10 @@ export async function currentUser(
   const unsigned = request.unsignCookie(raw);
   if (!unsigned.valid || !unsigned.value) return undefined;
 
-  return findUserById(database, unsigned.value);
+  const session = readSessionValue(unsigned.value, Math.floor(Date.now() / 1000));
+  if (!session) return undefined;
+
+  return findUserById(database, session.userId);
 }
 
 export function setSessionCookie(
@@ -48,13 +54,57 @@ export function setSessionCookie(
   userId: string,
   cookie: AuthRouteOptions["cookie"]
 ): void {
-  reply.setCookie(SESSION_COOKIE, userId, {
+  reply.setCookie(SESSION_COOKIE, createSessionValue(userId, Math.floor(Date.now() / 1000)), {
     path: "/",
     httpOnly: true,
     signed: true,
     maxAge: SESSION_MAX_AGE_SECONDS,
     ...cookie,
   });
+}
+
+interface SessionPayload {
+  v: number;
+  userId: string;
+  issuedAt: number;
+}
+
+function createSessionValue(userId: string, issuedAt: number): string {
+  const payload: SessionPayload = { v: SESSION_VERSION, userId, issuedAt };
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function readSessionValue(value: string, now: number): SessionPayload | undefined {
+  if (value.length === 0 || value.length > MAX_SESSION_VALUE_LENGTH || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    return undefined;
+  }
+
+  try {
+    const decoded = Buffer.from(value, "base64url");
+    if (decoded.toString("base64url") !== value) return undefined;
+
+    const parsed = JSON.parse(decoded.toString("utf8")) as unknown;
+    if (!isSessionPayload(parsed)) return undefined;
+    if (parsed.issuedAt > now || now - parsed.issuedAt >= SESSION_MAX_AGE_SECONDS) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function isSessionPayload(value: unknown): value is SessionPayload {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+
+  const payload = value as Record<string, unknown>;
+  return (
+    payload.v === SESSION_VERSION &&
+    typeof payload.userId === "string" &&
+    payload.userId.length > 0 &&
+    payload.userId.length <= MAX_USER_ID_LENGTH &&
+    typeof payload.issuedAt === "number" &&
+    Number.isInteger(payload.issuedAt) &&
+    payload.issuedAt >= 0
+  );
 }
 
 function clearSessionCookie(reply: FastifyReply, cookie: AuthRouteOptions["cookie"]): void {

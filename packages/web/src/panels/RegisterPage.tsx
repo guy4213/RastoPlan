@@ -26,7 +26,7 @@ export function RegisterPage({ onSignedIn, onSwitchToLogin }: RegisterPageProps)
     setError(null);
     setBusy(true);
     try {
-      onSignedIn(await register(email, password));
+      onSignedIn(await register({ email, password }));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);

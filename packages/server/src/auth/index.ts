@@ -37,6 +37,7 @@ const SCRYPT_PARALLELISM = 1;
 const SCRYPT_MAX_MEMORY = 64 * 1024 * 1024;
 const KEY_LENGTH = 64;
 const SALT_LENGTH = 16;
+const MAX_STORED_HASH_LENGTH = 512;
 
 export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_PASSWORD_LENGTH = 200;
@@ -69,25 +70,45 @@ export async function hashPassword(password: string): Promise<string> {
  * stored hash, so one corrupt row cannot turn a failed login into a 500.
  */
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  if (stored.length > MAX_STORED_HASH_LENGTH) return false;
+
   const parts = stored.split("$");
   if (parts.length !== 6 || parts[0] !== "scrypt") return false;
 
   const cost = Number(parts[1]);
   const blockSize = Number(parts[2]);
   const parallelism = Number(parts[3]);
-  if (!Number.isInteger(cost) || !Number.isInteger(blockSize) || !Number.isInteger(parallelism)) return false;
+  if (
+    cost !== SCRYPT_COST ||
+    blockSize !== SCRYPT_BLOCK_SIZE ||
+    parallelism !== SCRYPT_PARALLELISM
+  ) {
+    return false;
+  }
 
-  const salt = Buffer.from(parts[4]!, "base64");
-  const expected = Buffer.from(parts[5]!, "base64");
-  if (salt.length === 0 || expected.length === 0) return false;
+  const salt = decodeCanonicalBase64(parts[4]!, SALT_LENGTH);
+  const expected = decodeCanonicalBase64(parts[5]!, KEY_LENGTH);
+  if (!salt || !expected) return false;
 
-  const derived = await scryptAsync(password, salt, expected.length, {
-    N: cost,
-    r: blockSize,
-    p: parallelism,
-    maxmem: SCRYPT_MAX_MEMORY,
-  });
-  return derived.length === expected.length && timingSafeEqual(derived, expected);
+  try {
+    const derived = await scryptAsync(password, salt, KEY_LENGTH, {
+      N: SCRYPT_COST,
+      r: SCRYPT_BLOCK_SIZE,
+      p: SCRYPT_PARALLELISM,
+      maxmem: SCRYPT_MAX_MEMORY,
+    });
+    return timingSafeEqual(derived, expected);
+  } catch {
+    return false;
+  }
+}
+
+function decodeCanonicalBase64(value: string, expectedLength: number): Buffer | undefined {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return undefined;
+
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.length !== expectedLength || decoded.toString("base64") !== value) return undefined;
+  return decoded;
 }
 
 /** Emails are matched case-insensitively; the stored form is the normalised one. */

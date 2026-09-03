@@ -12,6 +12,8 @@ export interface ServerConfig {
   authSecret: string | undefined;
 }
 
+const AUTH_SECRET_PLACEHOLDER = "change-me-to-at-least-32-characters-long";
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     port: env.PORT ? Number(env.PORT) : 3000,
@@ -24,8 +26,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
 
 /** Session cookies must be signed; refusing to boot beats issuing forgeable ones. */
 export function requireAuthSecret(authSecret: string | undefined): string {
-  if (!authSecret || authSecret.length < 32) {
-    throw new Error("AUTH_SECRET is required and must be at least 32 characters");
+  if (!authSecret || authSecret.length < 32 || authSecret === AUTH_SECRET_PLACEHOLDER) {
+    throw new Error("AUTH_SECRET is required, must be at least 32 characters, and cannot use the example placeholder");
   }
   return authSecret;
 }
