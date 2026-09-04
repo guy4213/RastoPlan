@@ -353,3 +353,36 @@ test("CORS allows the methods the browser actually uses to save and delete", asy
     await app.close();
   }
 });
+
+test("CORS accepts every configured origin, so dev and preview both work", async () => {
+  // vite dev serves on 5173 and vite preview on 4173. With a single origin the
+  // one you are not running is rejected, and the app reports only
+  // "Failed to fetch" with nothing in the server log to explain it.
+  const app = buildApp({
+    database: new InMemoryDatabase(),
+    config: {
+      webOrigin: "http://localhost:5173, http://localhost:4173/",
+      authSecret: "test-secret-that-is-long-enough-000000",
+    },
+  });
+  try {
+    for (const origin of ["http://localhost:5173", "http://localhost:4173"]) {
+      const preflight = await app.inject({
+        method: "OPTIONS",
+        url: "/api/projects/project-1",
+        headers: { origin, "access-control-request-method": "PUT" },
+      });
+      assert.equal(preflight.headers["access-control-allow-origin"], origin);
+      assert.equal(preflight.headers["access-control-allow-credentials"], "true");
+    }
+
+    const stranger = await app.inject({
+      method: "OPTIONS",
+      url: "/api/projects/project-1",
+      headers: { origin: "http://evil.example", "access-control-request-method": "PUT" },
+    });
+    assert.notEqual(stranger.headers["access-control-allow-origin"], "http://evil.example");
+  } finally {
+    await app.close();
+  }
+});

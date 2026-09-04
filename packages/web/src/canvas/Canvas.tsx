@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import type { Point } from "@rastoplan/core";
@@ -294,13 +294,10 @@ export function Canvas() {
         if (!completed) return;
         if (completed.rafId !== null) window.cancelAnimationFrame(completed.rafId);
         wheelRef.current = null;
-        const stageContainer = stageRef.current?.container();
-        if (stageContainer) {
-          stageContainer.style.transform = "";
-          stageContainer.style.transformOrigin = "";
-          stageContainer.style.willChange = "";
-        }
-        // One React/Konva render for the complete wheel gesture.
+        // The CSS preview stays on until Konva has drawn the new scale — see
+        // the layout effect below. Clearing it here instead let a frame land
+        // between the two, showing the pre-gesture zoom for an instant before
+        // snapping to the new one.
         dispatch({
           type: "set-view",
           view: { scale: completed.currentScale, offset: completed.currentOffset },
@@ -310,6 +307,19 @@ export function Canvas() {
     [view.scale, view.offset, dispatch]
   );
 
+  // Runs after Konva has drawn the committed scale but before the browser
+  // paints, so the preview transform and the real view swap in one frame.
+  // A synchronous flushSync would also close the gap, but it forces the whole
+  // placement layer to re-render inside the wheel handler, which is felt as a
+  // stall on a busy plan.
+  useLayoutEffect(() => {
+    if (wheelRef.current) return;
+    const stageContainer = stageRef.current?.container();
+    if (!stageContainer || !stageContainer.style.transform) return;
+    stageContainer.style.transform = "";
+    stageContainer.style.transformOrigin = "";
+    stageContainer.style.willChange = "";
+  }, [view.scale, view.offset]);
   useEffect(
     () => () => {
       const gesture = wheelRef.current;

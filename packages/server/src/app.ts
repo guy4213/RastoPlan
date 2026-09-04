@@ -1,7 +1,7 @@
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance } from "fastify";
-import { requireAuthSecret, sessionCookieOptions, type ServerConfig } from "./config.js";
+import { parseWebOrigins, requireAuthSecret, sessionCookieOptions, type ServerConfig } from "./config.js";
 import type { Database } from "./db/index.js";
 import { authRoutes } from "./routes/auth.js";
 import { healthRoutes } from "./routes/health.js";
@@ -20,7 +20,7 @@ export function buildApp({ database, config }: BuildAppOptions): FastifyInstance
   // and the browser then blocks the PUT that saves a project and the DELETE that
   // removes one — surfacing as "Failed to fetch" with the server none the wiser.
   app.register(cors, {
-    origin: config.webOrigin,
+    origin: parseWebOrigins(config.webOrigin),
     credentials: true,
     methods: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],
   });

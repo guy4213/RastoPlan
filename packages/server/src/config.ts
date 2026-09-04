@@ -6,7 +6,13 @@ export interface ServerConfig {
   host: string;
   /** Neon pooled Postgres connection string. */
   databaseUrl: string | undefined;
-  /** The single browser origin allowed to call the API with cookies. */
+  /**
+   * Browser origins allowed to call the API with cookies, comma separated.
+   *
+   * A list rather than one value because `vite dev` and `vite preview` serve on
+   * different ports (5173 and 4173), and a single origin means whichever one
+   * you are not running is blocked by CORS with a bare "Failed to fetch".
+   */
   webOrigin: string;
   /** Secret used to sign the session cookie. Required once auth is enabled. */
   authSecret: string | undefined;
@@ -32,16 +38,29 @@ export function requireAuthSecret(authSecret: string | undefined): string {
   return authSecret;
 }
 
+/** Splits WEB_ORIGIN into the exact origins CORS should accept. */
+export function parseWebOrigins(webOrigin: string): string[] {
+  return webOrigin
+    .split(",")
+    .map((entry) => entry.trim().replace(/\/+$/, ""))
+    .filter((entry) => entry.length > 0);
+}
+
 /**
  * Cross-site cookies need SameSite=None, which browsers only accept together
  * with Secure — and Secure cookies are dropped on plain http. Local development
  * therefore has to fall back to Lax, which works because Vite and the API are
  * both on http://localhost.
+ *
+ * With several origins configured, one plain-http entry forces Lax for all of
+ * them: a Secure cookie would simply never be stored by that origin.
  */
 export function sessionCookieOptions(webOrigin: string): {
   sameSite: "none" | "lax";
   secure: boolean;
 } {
-  const crossSiteCapable = webOrigin.startsWith("https://");
+  const origins = parseWebOrigins(webOrigin);
+  const crossSiteCapable =
+    origins.length > 0 && origins.every((origin) => origin.startsWith("https://"));
   return crossSiteCapable ? { sameSite: "none", secure: true } : { sameSite: "lax", secure: false };
 }
