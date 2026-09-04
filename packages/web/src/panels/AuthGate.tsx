@@ -9,6 +9,7 @@ import {
 import { LoginPage } from "./LoginPage.js";
 import { RegisterPage } from "./RegisterPage.js";
 import { authPageStyles } from "./authStyles.js";
+import { SessionProvider } from "../auth/session.js";
 
 type Phase =
   | { kind: "checking" }
@@ -69,52 +70,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
       }
     };
 
+    // The account is published rather than drawn here: the toolbar lays it out
+    // alongside its own controls. Drawing it as a fixed overlay covered the
+    // חשב button and the unit switch underneath it.
     return (
-      <>
-        <div
-          dir="rtl"
-          style={{
-            position: "fixed",
-            insetBlockStart: 8,
-            insetInlineEnd: 12,
-            zIndex: 1000,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "5px 8px",
-            border: "1px solid #cbd5e1",
-            borderRadius: 6,
-            background: "#fff",
-            boxShadow: "0 2px 8px rgba(15, 23, 42, 0.08)",
-            fontFamily: "system-ui, -apple-system, Segoe UI, Arial, sans-serif",
-            fontSize: 12,
-          }}
-        >
-          <span>{phase.account.email}</span>
-          <button
-            type="button"
-            disabled={loggingOut}
-            onClick={() => void handleLogout()}
-            style={{
-              border: "none",
-              background: "none",
-              color: "#1d4ed8",
-              cursor: loggingOut ? "wait" : "pointer",
-              fontFamily: "inherit",
-              fontSize: 12,
-              padding: 0,
-            }}
-          >
-            {loggingOut ? "מתנתק…" : "התנתקות"}
-          </button>
-          {logoutError && (
-            <span role="alert" style={{ color: "#b91c1c" }}>
-              {logoutError}
-            </span>
-          )}
-        </div>
+      <SessionProvider
+        value={{
+          account: phase.account,
+          logout: () => void handleLogout(),
+          loggingOut,
+          logoutError,
+        }}
+      >
         {children}
-      </>
+      </SessionProvider>
     );
   }
 

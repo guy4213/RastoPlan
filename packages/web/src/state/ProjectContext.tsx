@@ -47,25 +47,49 @@ function uid(prefix: string): string {
  * falling back to a freshly seeded project on empty storage. The old
  * hard-coded "primary" id trapped every install in a single project.
  */
-async function pickInitialProject(): Promise<Project> {
+interface InitialProject {
+  project: Project;
+  /** Hebrew message when the pick did not go cleanly; the caller toasts it. */
+  warning?: string;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function pickInitialProject(): Promise<InitialProject> {
+  let listFailure: string | undefined;
   try {
     const rows = await storage.list();
     if (rows.length > 0) {
       const newest = [...rows].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0]!;
-      return await storage.load(newest.id);
+      return { project: await storage.load(newest.id) };
     }
-  } catch {
-    // Fall through to seeded project; toast surfaces the real load errors
-    // on user-triggered opens (see openProject).
+  } catch (err) {
+    // Falling through to a fresh project is the only way to keep the app
+    // usable, but it must never look like a normal empty start: an expired
+    // session or a server outage would otherwise read as "all my projects
+    // are gone", and the blank project would then be autosaved over nothing.
+    listFailure = errorMessage(err);
   }
+
   const seeded = initialProject(uid("project"));
   try {
     await storage.save(seeded);
-  } catch {
-    // Storage might be unavailable (private-browsing quota, etc.) — keep
-    // the in-memory project and let the auto-save toast surface it later.
+  } catch (err) {
+    // The project stays in memory so drawing still works, but it is NOT in
+    // the projects list and will not survive a refresh. Saying so beats
+    // letting the list look empty for no visible reason.
+    return {
+      project: seeded,
+      warning: `הפרויקט הראשוני לא נשמר — ${errorMessage(err)}. הוא לא יופיע ברשימת הפרויקטים ולא ישרוד רענון.`,
+    };
   }
-  return seeded;
+
+  return {
+    project: seeded,
+    warning: listFailure && `טעינת רשימת הפרויקטים נכשלה — ${listFailure}. נפתח פרויקט חדש; ייתכן שקיימים פרויקטים שאינם מוצגים.`,
+  };
 }
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
@@ -87,10 +111,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (didLoad.current) return;
     didLoad.current = true;
-    void pickInitialProject().then((project) => {
+    void pickInitialProject().then(({ project, warning }) => {
       dispatch({ type: "load-project", project });
       setReady(true);
+      if (warning) toast.push(warning, "error");
     });
+    // Runs once, guarded by didLoad; `toast` is stable for the provider's life.
   }, []);
 
   // Debounced auto-save on every project change, but only after the initial
@@ -213,7 +239,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           if (id === state.project.id) {
             // Removed the currently open project — pick the next best.
             const next = await pickInitialProject();
-            dispatch({ type: "load-project", project: next });
+            dispatch({ type: "load-project", project: next.project });
+            if (next.warning) toast.push(next.warning, "error");
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

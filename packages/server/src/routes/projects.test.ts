@@ -324,3 +324,32 @@ test("one user cannot read, overwrite, duplicate or delete another user's projec
     await app.close();
   }
 });
+
+test("CORS allows the methods the browser actually uses to save and delete", async () => {
+  // @fastify/cors defaults to GET/HEAD/POST. With that default the browser
+  // rejects the PUT that saves a project and the DELETE that removes one
+  // before the request is ever sent, which surfaces as "Failed to fetch"
+  // while the server logs nothing at all.
+  const app = appForTest();
+  try {
+    for (const method of ["PUT", "DELETE", "POST", "GET"]) {
+      const preflight = await app.inject({
+        method: "OPTIONS",
+        url: "/api/projects/project-1",
+        headers: {
+          origin: "http://localhost:5173",
+          "access-control-request-method": method,
+        },
+      });
+
+      const allowed = String(preflight.headers["access-control-allow-methods"] ?? "")
+        .split(",")
+        .map((entry) => entry.trim());
+      assert.ok(allowed.includes(method), `${method} must be allowed, got: ${allowed.join(",")}`);
+      assert.equal(preflight.headers["access-control-allow-credentials"], "true");
+      assert.equal(preflight.headers["access-control-allow-origin"], "http://localhost:5173");
+    }
+  } finally {
+    await app.close();
+  }
+});

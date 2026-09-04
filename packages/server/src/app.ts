@@ -16,7 +16,14 @@ export function buildApp({ database, config }: BuildAppOptions): FastifyInstance
   const app = Fastify({ logger: true });
   const cookieOptions = sessionCookieOptions(config.webOrigin);
 
-  app.register(cors, { origin: config.webOrigin, credentials: true });
+  // The method list has to be explicit: @fastify/cors defaults to GET/HEAD/POST,
+  // and the browser then blocks the PUT that saves a project and the DELETE that
+  // removes one — surfacing as "Failed to fetch" with the server none the wiser.
+  app.register(cors, {
+    origin: config.webOrigin,
+    credentials: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],
+  });
   // The signing secret gates boot rather than request handling: a server that
   // starts without one would hand out session cookies anybody could forge.
   app.register(cookie, { secret: requireAuthSecret(config.authSecret) });

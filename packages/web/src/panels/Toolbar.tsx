@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Point } from "@rastoplan/core";
 import { useProject, type SaveStatus } from "../state/ProjectContext.js";
 import { ProjectsModal } from "./ProjectsModal.js";
+import { AccountMenu } from "./AccountMenu.js";
 
 interface FreeEndpoint {
   wallId: string;
@@ -198,6 +199,7 @@ export function Toolbar() {
         >
           חשב
         </button>
+        <AccountMenu />
       </div>
       <ProjectsModal open={projectsOpen} onClose={() => setProjectsOpen(false)} />
     </header>
