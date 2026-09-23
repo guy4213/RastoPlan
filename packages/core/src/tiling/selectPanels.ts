@@ -1,4 +1,5 @@
-import type { AccessoryRules, Panel, PanelCatalog } from "../types.js";
+import type { AccessoryRules, NodeType, Panel, PanelCatalog } from "../types.js";
+import { panelAllowedAtEnds } from "./junctionRestriction.js";
 
 export interface SelectPanelsResult {
   /** the chosen multiset of straight panels, in no particular order (arrangePanels handles ordering) */
@@ -40,7 +41,8 @@ export function selectPanels(
   rawClearLength: number,
   catalog: PanelCatalog,
   rules: AccessoryRules,
-  availability?: PanelAvailability
+  availability?: PanelAvailability,
+  endNodeTypes: readonly NodeType[] = []
 ): SelectPanelsResult {
   // The DP below is indexed by whole centimetres, so a fractional run would
   // match nothing and report the wall as untileable rather than off by 3mm.
@@ -52,7 +54,10 @@ export function selectPanels(
       // catalog type as false; honouring that stale bit here makes even a
       // newly imported positive quantity render as one red wall.
       (p.inStock || availability !== undefined) &&
-      p.kind === "straight"
+      p.kind === "straight" &&
+      // Filtered here, before any search path, so the stocked, partial-stock
+      // and theoretical selections all obey the junction restriction alike.
+      panelAllowedAtEnds(p, endNodeTypes)
   );
   const widthToPanel = new Map<number, Panel>();
   for (const panel of straightInStock) {

@@ -62,7 +62,9 @@ const TABLE_HEADERS = [
 /**
  * Builds the customer's bill of materials in the exact shape of the sheets
  * they hand to Priority: same header block, same column headers, same product
- * rows in the same order, zeros where a row is unused.
+ * rows in the same relative order — except a row with zero quantity in every
+ * pour is omitted entirely rather than kept at 0 (Priority doesn't read by
+ * row number, and a shorter sheet is easier to eyeball on site).
  *
  * Two details that are easy to get wrong and are taken from their formulas:
  * - "כמות דרושה לפרוייקט" is `=MAX(...)` across the pour columns, not a sum.
@@ -118,15 +120,11 @@ export function buildBomTemplate(input: BuildBomTemplateInput): BomTemplate {
     isSectionLabel: true,
   });
 
-  const panelRows = [
-    ...STRAIGHT_PANEL_WIDTHS.map((w) => panelRow(`פנאל ${w}/300`, (w / 100) * 3)),
-    ...BOM_CORNER_PANEL_LEGS.map((leg) => panelRow(`פנאל ${leg}/${leg}/300`, ((leg * 2) / 100) * 3)),
-  ];
-
-  const rows: BomRow[] = [
-    ...panelRows,
-    sectionRow("חצאי פנאלים :"),
-    sectionRow("אביזרים :"),
+  const straightRows = STRAIGHT_PANEL_WIDTHS.map((w) => panelRow(`פנאל ${w}/300`, (w / 100) * 3));
+  const cornerRows = BOM_CORNER_PANEL_LEGS.map((leg) =>
+    panelRow(`פנאל ${leg}/${leg}/300`, ((leg * 2) / 100) * 3)
+  );
+  const accessoryRows = [
     accessoryRow(ACCESSORY_ITEMS.straightClamp.label, (c) => c.straightClamps),
     accessoryRow(ACCESSORY_ITEMS.cornerClamp.label, (c) => c.cornerClamps),
     accessoryRow(ACCESSORY_ITEMS.craneAdapter.label, () => accessories.total.craneAdapters),
@@ -138,12 +136,40 @@ export function buildBomTemplate(input: BuildBomTemplateInput): BomTemplate {
     accessoryRow(ACCESSORY_ITEMS.nut.label, (c) => c.nuts),
   ];
 
+  // Rows with zero quantity in every pour (and therefore a zero MAX/required
+  // column) are omitted entirely rather than kept at 0 — the customer
+  // confirmed Priority doesn't read by row number, so a shorter sheet is
+  // safe. A section header is kept only when at least one row in the group
+  // it introduces survives that filter; otherwise the header itself would be
+  // a label over nothing.
+  //
+  // "חצאי פנאלים :" ("half panels") is deliberately NOT reproduced here: it
+  // is a dead section header copied from the customer's own Priority
+  // template, where it also introduces no rows (their sheet has no half-panel
+  // product line under it either — see the Naftali B reference file). Kept
+  // out per an explicit decision (Guy, 23/9/2026): it never labelled anything
+  // real, so it should not exist in this project's export either.
+  const keptCornerRows = cornerRows.filter(hasQuantity);
+  const keptAccessoryRows = accessoryRows.filter(hasQuantity);
+
+  const rows: BomRow[] = [
+    ...straightRows.filter(hasQuantity),
+    ...keptCornerRows,
+    ...(keptAccessoryRows.length > 0 ? [sectionRow("אביזרים :")] : []),
+    ...keptAccessoryRows,
+  ];
+
+  const panelRows = [...straightRows, ...cornerRows];
   return {
     header: input.header,
     pourNames,
     rows,
     totalSqm: round2(panelRows.reduce((sum, r) => sum + (r.totalSqm ?? 0), 0)),
   };
+}
+
+function hasQuantity(row: BomRow): boolean {
+  return row.requiredQty !== 0;
 }
 
 /**

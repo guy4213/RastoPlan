@@ -217,6 +217,13 @@ export interface ResolvedWall {
   outwardSign: OutwardSign;
   faces: [ResolvedWallFace, ResolvedWallFace];
   flags: string[];
+  /**
+   * Distinct node types at the ends of every drawn contour of this wall (both
+   * contours of a paired wall). Set by tileProject; it is what junction-
+   * restricted panels (Panel.allowedAtNodeTypes) are checked against, both by
+   * the engine and by the web app when a placement is edited by hand.
+   */
+  endNodeTypes?: NodeType[];
 }
 
 export interface Diagnostic {
@@ -313,6 +320,14 @@ export interface Panel {
   kind: "straight" | "corner" | "corner-axial";
   /** exact row label in the customer's Priority BOM sheet, e.g. "פנאל 75/300" */
   bomLabel: string;
+  /**
+   * Junction restriction — a PROHIBITION, not a requirement. When set, the
+   * engine may select this panel only on a wall segment with at least one end
+   * node of a listed type; a segment that qualifies is still free to use other
+   * panels. Undefined means no restriction. (R90 → ["T"], customer decision,
+   * docs/open-questions.md §6א.)
+   */
+  allowedAtNodeTypes?: NodeType[];
 }
 
 export interface PanelCatalog {

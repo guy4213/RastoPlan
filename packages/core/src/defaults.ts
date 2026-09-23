@@ -10,8 +10,11 @@ export const DEFAULT_ACCESSORY_RULES: AccessoryRules = {
   dywidagStandardMaxThicknessCm: 30,
   strutSpacingCm: 150,
   craneAdaptersPerProject: 2,
-  timberGapMin: 5,
-  timberGapMax: 9,
+  // Customer decision, 13/9/2026 (Phase C): narrowed from 5–9cm. Contradicts
+  // the approved price quote's "controlled 5–9cm gap" wording — see
+  // docs/open-questions.md §4 for the discrepancy and the date it was approved.
+  timberGapMin: 1,
+  timberGapMax: 5,
   outerCornerProtrusionCm: 10,
   outerCornerProtrusionMinCm: 5,
   outerCornerProtrusionReferenceThicknessCm: 20,
@@ -64,6 +67,9 @@ function straightPanel(width: number): Panel {
     inStock: true,
     kind: "straight",
     bomLabel: `פנאל ${width}/300`,
+    // Customer decision (Yaron, in writing): the 90cm panel belongs at T
+    // junctions only. A prohibition elsewhere, not a requirement at a T.
+    ...(width === 90 ? { allowedAtNodeTypes: ["T" as const] } : {}),
   };
 }
 

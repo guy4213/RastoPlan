@@ -1,6 +1,7 @@
 import type {
   AccessoryRules,
   Edge,
+  NodeType,
   PanelCatalog,
   Placement,
   PlacementSide,
@@ -60,9 +61,11 @@ export function planRun(
   clearLength: number,
   catalog: PanelCatalog,
   rules: AccessoryRules,
-  availability?: PanelAvailability
+  availability?: PanelAvailability,
+  /** node types at the ends of the wall this run belongs to (junction-restricted panels) */
+  endNodeTypes: readonly NodeType[] = []
 ): RunPlan {
-  const selection = selectPanels(clearLength, catalog, rules, availability);
+  const selection = selectPanels(clearLength, catalog, rules, availability, endNodeTypes);
   return {
     items: selection.flags.length > 0 ? [] : arrangePanels(selection.panels, selection.gap),
     flags: selection.flags,
@@ -146,8 +149,9 @@ export function tileWall(
   target: TileWallTarget,
   catalog: PanelCatalog,
   rules: AccessoryRules,
-  availability?: PanelAvailability
+  availability?: PanelAvailability,
+  endNodeTypes: readonly NodeType[] = []
 ): Placement[] {
-  const plan = planRun(target.clearLength, catalog, rules, availability);
+  const plan = planRun(target.clearLength, catalog, rules, availability, endNodeTypes);
   return materialiseRun(plan, { ...target, edgeId: edge.id });
 }

@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
-import type { Point } from "@rastoplan/core";
+import { useState } from "react";
+import type { KeyboardEvent } from "react";
+import { countPanels, type Point } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
 import { MAX_WALL_THICKNESS_CM, MIN_WALL_THICKNESS_CM } from "../state/project.js";
 import { formatLength } from "../canvas/geometry.js";
 import { displayedWallThickness } from "../canvas/resolvedWallFrame.js";
+import { useDraftField } from "./useDraftField.js";
+import { almostEqual, formatRounded, parseBoundedNumber } from "./numberDraft.js";
 
 /**
  * Rotate a point around origin by the given angle in degrees. Used to
@@ -23,7 +26,6 @@ export function WallPanel() {
   const visibleThickness = wall
     ? displayedWallThickness(wall, state.project.layout, state.project.walls)
     : 0;
-  const thicknessForField = Math.round(visibleThickness * 10) / 10;
 
   // Numeric length draft — buffered so intermediate values (e.g. an
   // in-progress "40" typed toward "400") don't rewrite the wall on every
@@ -31,22 +33,37 @@ export function WallPanel() {
   const currentLength = wall
     ? Math.round(Math.hypot(wall.innerLine[1].x - wall.innerLine[0].x, wall.innerLine[1].y - wall.innerLine[0].y))
     : 0;
-  const [lengthDraft, setLengthDraft] = useState<string>(String(currentLength));
 
-  useEffect(() => {
-    setLengthDraft(String(currentLength));
-  }, [currentLength, wall?.id]);
+  const lengthField = useDraftField<number>(currentLength, {
+    parse: (raw) => parseBoundedNumber(raw, { min: 5 }),
+    format: (n) => formatRounded(n),
+    // Retyping the same integer length shouldn't re-dispatch a no-op wall edit.
+    equals: (n, committed) => almostEqual(n, committed, 0.5),
+    onCommit: (n) => {
+      if (!wall) return;
+      const [a, b] = wall.innerLine;
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      // Preserve direction; if the wall was zero-length (shouldn't happen)
+      // fall back to +X so we don't divide by zero.
+      const dx = len === 0 ? 1 : (b.x - a.x) / len;
+      const dy = len === 0 ? 0 : (b.y - a.y) / len;
+      const newB: Point = { x: Math.round(a.x + dx * n), y: Math.round(a.y + dy * n) };
+      dispatch({ type: "update-wall", wallId: wall.id, patch: { innerLine: [a, newB] } });
+    },
+  });
 
   // Thickness gets the same buffering as length, and for the same reason: an
   // unbuffered field dispatched on every keystroke, so clearing it to retype
   // sent thickness 0 and each digit threw away the whole computed layout.
-  const [thicknessDraft, setThicknessDraft] = useState<string>(
-    wall && thicknessIsSet ? String(thicknessForField) : ""
-  );
-
-  useEffect(() => {
-    setThicknessDraft(wall && thicknessIsSet ? String(thicknessForField) : "");
-  }, [thicknessForField, thicknessIsSet, wall?.id]);
+  const thicknessField = useDraftField<number>(visibleThickness, {
+    parse: (raw) => parseBoundedNumber(raw, { min: MIN_WALL_THICKNESS_CM, max: MAX_WALL_THICKNESS_CM }),
+    format: (n) => (wall && thicknessIsSet ? formatRounded(n, 1) : ""),
+    equals: almostEqual,
+    onCommit: (n) => {
+      if (!wall) return;
+      dispatch({ type: "update-wall", wallId: wall.id, patch: { thickness: n } });
+    },
+  });
 
   const [nextLength, setNextLength] = useState<string>("300");
   const [nextAngle, setNextAngle] = useState<string>("0");
@@ -64,31 +81,6 @@ export function WallPanel() {
   const isPaired = !!wall.pairedWallId;
   const partnerMissing = isPaired && !partner;
 
-  const commitThickness = () => {
-    const n = Number(thicknessDraft.replace(",", "."));
-    if (!Number.isFinite(n) || n < MIN_WALL_THICKNESS_CM || n > MAX_WALL_THICKNESS_CM) {
-      setThicknessDraft(String(thicknessForField));
-      return;
-    }
-    if (thicknessIsSet && Math.abs(n - visibleThickness) < 0.001) return;
-    dispatch({ type: "update-wall", wallId: wall.id, patch: { thickness: n } });
-  };
-
-  const commitLength = () => {
-    const n = Number(lengthDraft);
-    if (!Number.isFinite(n) || n < 5) {
-      setLengthDraft(String(currentLength));
-      return;
-    }
-    const len = Math.hypot(b.x - a.x, b.y - a.y);
-    // Preserve direction; if the wall was zero-length (shouldn't happen)
-    // fall back to +X so we don't divide by zero.
-    const dx = len === 0 ? 1 : (b.x - a.x) / len;
-    const dy = len === 0 ? 0 : (b.y - a.y) / len;
-    const newB: Point = { x: Math.round(a.x + dx * n), y: Math.round(a.y + dy * n) };
-    dispatch({ type: "update-wall", wallId: wall.id, patch: { innerLine: [a, newB] } });
-  };
-
   const addNextWall = () => {
     const len = Number(nextLength);
     const angle = Number(nextAngle);
@@ -100,6 +92,31 @@ export function WallPanel() {
     dispatch({ type: "add-wall", a: start, b: end });
   };
 
+  const onNextFieldKeyDown = (resetTo: string, setter: (v: string) => void) => (e: KeyboardEvent<HTMLInputElement>) => {
+    // Neither key blurs: keep focus in the field so Tab/Shift+Tab continues
+    // from here rather than restarting from the top of the panel.
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addNextWall();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setter(resetTo);
+    }
+  };
+
+  // The resolved wall this wall's placements live under — either the wall
+  // itself, or (on a two-contour plan) the primary wall that consumed it.
+  // `Placement.wallId` always names the primary/resolved wall id.
+  const layout = state.project.layout;
+  const resolvedWallId = layout?.resolvedWalls.find(
+    (rw) => rw.id === wall.id || rw.consumedWallIds.includes(wall.id)
+  )?.id;
+  const wallTimber =
+    layout && resolvedWallId
+      ? countPanels(state.project.placements.filter((p) => p.wallId === resolvedWallId))
+      : null;
+
   return (
     <section style={{ padding: 12, borderBottom: "1px solid #e2e8f0" }}>
       <h2 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600, color: "#0f172a" }}>
@@ -110,15 +127,10 @@ export function WallPanel() {
           <input
             type="number"
             min={5}
-            value={lengthDraft}
-            onChange={(e) => setLengthDraft(e.target.value)}
-            onBlur={commitLength}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                (e.target as HTMLInputElement).blur();
-              }
-            }}
+            value={lengthField.value}
+            onChange={(e) => lengthField.onChange(e.target.value)}
+            onBlur={lengthField.onBlur}
+            onKeyDown={lengthField.onKeyDown}
             style={inputStyle}
           />
         </Row>
@@ -148,16 +160,11 @@ export function WallPanel() {
             min={MIN_WALL_THICKNESS_CM}
             max={MAX_WALL_THICKNESS_CM}
             step={0.1}
-            value={thicknessDraft}
+            value={thicknessField.value}
             disabled={partnerMissing}
-            onChange={(e) => setThicknessDraft(e.target.value)}
-            onBlur={commitThickness}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                (e.target as HTMLInputElement).blur();
-              }
-            }}
+            onChange={(e) => thicknessField.onChange(e.target.value)}
+            onBlur={thicknessField.onBlur}
+            onKeyDown={thicknessField.onKeyDown}
             style={partnerMissing ? { ...inputStyle, background: "#f1f5f9", color: "#94a3b8" } : inputStyle}
           />
         </Row>
@@ -168,6 +175,11 @@ export function WallPanel() {
               ? "העובי נמדד חי בין שני הקווים, גם לפני חישוב. שינוי כאן יזיז את הקו השני ויסגור מחדש את הפינות."
               : "העובי הוקלד. הפאה השנייה נגזרת ממנו. אפשר גם לגרור את הידית שעל קו המידה בקנבס."}
         </p>
+        {wallTimber && (
+          <Row label="עץ בקיר">
+            <span>{`${wallTimber.timberPieces} חתיכות, ${wallTimber.timberLengthCm} ס"מ`}</span>
+          </Row>
+        )}
       </div>
       <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
         <button
@@ -191,6 +203,7 @@ export function WallPanel() {
               min={5}
               value={nextLength}
               onChange={(e) => setNextLength(e.target.value)}
+              onKeyDown={onNextFieldKeyDown("300", setNextLength)}
               style={inputStyle}
             />
           </Row>
@@ -200,6 +213,7 @@ export function WallPanel() {
                 type="number"
                 value={nextAngle}
                 onChange={(e) => setNextAngle(e.target.value)}
+                onKeyDown={onNextFieldKeyDown("0", setNextAngle)}
                 style={{ ...inputStyle, width: 70 }}
               />
               <QuickAngle label="→" deg={0} onClick={setNextAngle} />

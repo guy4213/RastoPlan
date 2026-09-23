@@ -11,6 +11,7 @@ import {
   wallDirection,
 } from "./geometry.js";
 import { resolvedWallFrame } from "./resolvedWallFrame.js";
+import { placementLabel } from "./placementLabel.js";
 
 interface Props {
   walls: Wall[];
@@ -182,14 +183,7 @@ export function Placements({
         // borders a room; outside panels meet edge-to-edge without overlapping.
         const isCornerLeg = placement.kind === "corner-panel";
 
-        const labelText =
-          placement.flags.includes("inventory-shortage")
-            ? `חסר ${placement.panelType}`
-            : placement.kind === "timber"
-              ? `עץ ${Math.round(placement.width)}`
-              : placement.flags.includes("outer-corner-protrusion")
-                ? `+${Math.round(placement.width)}`
-                : placement.panelType || `${Math.round(placement.width)}`;
+        const labelText = placementLabel(placement);
 
         // Corner panels and outer-corner protrusions come from the corners
         // layer and don't slide along the wall — leave them non-draggable

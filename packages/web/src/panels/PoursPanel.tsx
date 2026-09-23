@@ -1,4 +1,5 @@
 import { useProject } from "../state/ProjectContext.js";
+import { NAME_FIELD_MAX_CH, nameFieldWidthCh } from "./pourNameFieldWidth.js";
 
 export function PoursPanel() {
   const { state, dispatch } = useProject();
@@ -79,9 +80,13 @@ export function PoursPanel() {
                 onChange={(e) =>
                   dispatch({ type: "update-pour", pourId: pour.id, patch: { name: e.target.value } })
                 }
+                // Width fits the name, up to a cap — long names (no length
+                // limit on the stored value) stay fully intact and readable
+                // via the title tooltip instead of stretching the row.
+                title={pour.name.length > NAME_FIELD_MAX_CH ? pour.name : undefined}
                 style={{
-                  flex: 1,
-                  minWidth: 0,
+                  flexShrink: 0,
+                  width: `${nameFieldWidthCh(pour.name)}ch`,
                   border: "none",
                   background: "transparent",
                   fontSize: 14,
@@ -90,6 +95,7 @@ export function PoursPanel() {
                   color: "inherit",
                 }}
               />
+              <span style={{ flex: 1 }} />
               {isActive && (
                 <span
                   style={{

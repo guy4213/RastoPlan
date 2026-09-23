@@ -10,6 +10,7 @@ import { Placements } from "./Placements.js";
 import { CornerClamps } from "./CornerClamps.js";
 import { StraightClamps } from "./StraightClamps.js";
 import { WeldOverlay } from "./WeldOverlay.js";
+import { PourLabels } from "./PourLabels.js";
 import { ENDPOINT_SNAP_PIXELS, applyAxisLock, findEndpointSnapTarget, formatLength, snapEndpoint } from "./geometry.js";
 
 const MIN_SCALE = 0.05;
@@ -23,6 +24,7 @@ const MemoWalls = memo(Walls);
 const MemoPlacements = memo(Placements);
 const MemoStraightClamps = memo(StraightClamps);
 const MemoCornerClamps = memo(CornerClamps);
+const MemoPourLabels = memo(PourLabels);
 
 interface MarqueeRect { x0: number; y0: number; x1: number; y1: number }
 
@@ -704,6 +706,7 @@ export function Canvas() {
             scale={view.scale}
             externalCorners={layout?.externalCorners}
           />
+          <MemoPourLabels walls={walls} pours={pours} scale={view.scale} />
         </Layer>
         <Layer>
           {marquee && (() => {

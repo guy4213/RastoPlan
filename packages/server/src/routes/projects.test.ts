@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG, type Project } from "@rastoplan/core";
+import {
+  CURRENT_SCHEMA_VERSION,
+  DEFAULT_ACCESSORY_RULES,
+  DEFAULT_PANEL_CATALOG,
+  type Project,
+} from "@rastoplan/core";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 import type { Database } from "../db/index.js";
@@ -169,7 +174,7 @@ test("creates then reads a migrated project", async () => {
       headers: { cookie },
     });
     assert.equal(loaded.statusCode, 200);
-    assert.deepEqual(loaded.json(), { ...project, schemaVersion: 3, pours: [] });
+    assert.deepEqual(loaded.json(), { ...project, schemaVersion: CURRENT_SCHEMA_VERSION, pours: [] });
   } finally {
     await app.close();
   }

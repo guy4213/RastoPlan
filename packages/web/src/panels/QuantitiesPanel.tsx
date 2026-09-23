@@ -5,10 +5,10 @@ import {
   buildBomTemplate,
   checkFaceAlignment,
   countAccessoriesByPour,
-  countPanelsByFace,
   countPanelsByPour,
   type AccessoryCount,
   type BomRow,
+  type CountByPour,
   type Diagnostic,
   type FaceAlignmentIssueKind,
   type PanelCount,
@@ -17,6 +17,7 @@ import {
 import { useProject } from "../state/ProjectContext.js";
 import { downloadBomXlsx } from "../export/writeBomXlsx.js";
 import { readInventoryXlsx } from "../import/readInventoryXlsx.js";
+import { InventoryForm } from "./InventoryForm.js";
 
 /** The two rows the customer's own sheets type by hand — see docs/open-questions.md §3. */
 const OVERRIDABLE_ROWS = new Set<keyof AccessoryCount>(["cornerClamps", "straightClamps"]);
@@ -29,17 +30,13 @@ export function QuantitiesPanel() {
     kind: "success" | "error";
     text: string;
   } | null>(null);
+  const [manualInventoryOpen, setManualInventoryOpen] = useState(false);
 
-  const { accessories, automatic, panels, panelsByFace, pourNames, totalPourIds } = useMemo(() => {
+  const { accessories, automatic, panels, pourNames, totalPourIds } = useMemo(() => {
     const empty = {
       accessories: { byPour: {}, total: emptyAccessory() },
       automatic: { byPour: {}, total: emptyAccessory() },
       panels: { byPour: {}, total: { byType: {}, timberPieces: 0, timberLengthCm: 0 } },
-      panelsByFace: {
-        interior: { byType: {}, timberPieces: 0, timberLengthCm: 0 },
-        exterior: { byType: {}, timberPieces: 0, timberLengthCm: 0 },
-        total: { byType: {}, timberPieces: 0, timberLengthCm: 0 },
-      },
       pourNames: new Map<string, string>(),
       totalPourIds: [] as string[],
     };
@@ -58,11 +55,18 @@ export function QuantitiesPanel() {
       accessories: applyQuantityOverrides(automatic, project.overrides).counts,
       automatic,
       panels: countPanelsByPour(project.placements, project.walls),
-      panelsByFace: countPanelsByFace(project.placements, project.walls),
       pourNames: new Map(project.pours.map((p) => [p.id, p.name])),
       totalPourIds: project.pours.map((p) => p.id),
     };
   }, [project]);
+
+  // The panel table shows one column per pour, in display order — independent
+  // of the accessory table's/BOM's pourId ordering above, which this must not
+  // disturb.
+  const orderedPours = useMemo(
+    () => [...project.pours].sort((a, b) => a.order - b.order),
+    [project.pours]
+  );
 
   const hasPlacements = project.placements.length > 0 && !!project.layout;
   const alignment = useMemo(
@@ -132,6 +136,13 @@ export function QuantitiesPanel() {
     }
   }
 
+  function saveManualInventory(manualInventory: Record<string, number>) {
+    // Same action, same payload shape as the Excel path — one reducer case,
+    // one downstream pipeline either way.
+    dispatch({ type: "set-inventory", inventory: manualInventory });
+    setInventoryNotice({ kind: "success", text: "המלאי נשמר. יש ללחוץ חשב." });
+  }
+
   return (
     <aside
       style={{
@@ -159,13 +170,16 @@ export function QuantitiesPanel() {
             if (file) void importInventory(file);
           }}
         />
-        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={() => inventoryInputRef.current?.click()}
             style={exportButtonStyle}
           >
             ייבוא מלאי מאקסל
+          </button>
+          <button type="button" onClick={() => setManualInventoryOpen(true)} style={exportButtonStyle}>
+            הזנת מלאי ידנית
           </button>
           {hasPlacements && (
             <button type="button" onClick={exportBom} style={exportButtonStyle}>
@@ -186,10 +200,28 @@ export function QuantitiesPanel() {
         )}
       </div>
 
+      <InventoryForm
+        open={manualInventoryOpen}
+        catalog={project.catalog}
+        inventory={project.inventory}
+        onSave={saveManualInventory}
+        onClose={() => setManualInventoryOpen(false)}
+      />
+
       {!hasPlacements && (
         <div style={{ padding: 12, fontSize: 12, color: "#94a3b8" }}>
           עוד לא רצה מנוע. אביזרים ופאנלים יופיעו אחרי לחיצה על "חשב".
         </div>
+      )}
+
+      {/* Panels first among the quantity sections, then engine notes,
+          inventory-vs-requirement and accessories keep their previous
+          relative order. */}
+      {hasPlacements && (
+        <>
+          <SectionHeader>פאנלים</SectionHeader>
+          <PanelTable pours={orderedPours} panels={panels} />
+        </>
       )}
 
       {diagnostics.length > 0 && <Diagnostics items={diagnostics} />}
@@ -209,9 +241,6 @@ export function QuantitiesPanel() {
             overrides={project.overrides}
             onOverride={setOverride}
           />
-
-          <SectionHeader>פאנלים</SectionHeader>
-          <PanelTable counts={panelsByFace} />
         </>
       )}
     </aside>
@@ -462,51 +491,52 @@ function Diagnostics({ items }: { items: Diagnostic[] }) {
   );
 }
 
+/**
+ * One column per pour (in `order`) plus a project total. `PlacementSide`/
+ * `faceIsInterior` play no part here any more — this is a display change to
+ * this one table only; the interior/exterior split still exists in the model
+ * and in every count that feeds it. Timber is intentionally not shown here
+ * (see below); it's still counted everywhere else (clamps, core counts).
+ */
 function PanelTable({
-  counts,
+  pours,
+  panels,
 }: {
-  counts: { interior: PanelCount; exterior: PanelCount; total: PanelCount };
+  pours: { id: string; name: string }[];
+  panels: CountByPour<PanelCount>;
 }) {
-  const allTypes = Object.keys(counts.total.byType).sort();
+  const allTypes = Object.keys(panels.total.byType).sort();
   return (
-    <table style={tableStyle}>
-      <thead>
-        <tr>
-          <th style={thStyle}>סוג</th>
-          <th style={thStyle}>פנים</th>
-          <th style={thStyle}>חוץ</th>
-          <th style={{ ...thStyle, background: "#e2e8f0" }}>סה"כ</th>
-        </tr>
-      </thead>
-      <tbody>
-        {allTypes.map((type) => (
-          <tr key={type}>
-            <td style={tdLabelStyle}>{type}</td>
-            <td style={tdStyle}>{counts.interior.byType[type] ?? 0}</td>
-            <td style={tdStyle}>{counts.exterior.byType[type] ?? 0}</td>
-            <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>
-              {counts.total.byType[type] ?? 0}
-            </td>
+    <div style={{ overflowX: "auto" }}>
+      <table style={tableStyle}>
+        <thead>
+          <tr>
+            <th style={stickyThStyle}>סוג</th>
+            {pours.map((pour) => (
+              <th key={pour.id} style={thStyle}>
+                {pour.name}
+              </th>
+            ))}
+            <th style={{ ...thStyle, background: "#e2e8f0" }}>סה"כ</th>
           </tr>
-        ))}
-        <tr>
-          <td style={tdLabelStyle}>עץ (חתיכות)</td>
-          <td style={tdStyle}>{counts.interior.timberPieces}</td>
-          <td style={tdStyle}>{counts.exterior.timberPieces}</td>
-          <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>
-            {counts.total.timberPieces}
-          </td>
-        </tr>
-        <tr>
-          <td style={tdLabelStyle}>עץ (ס"מ)</td>
-          <td style={tdStyle}>{counts.interior.timberLengthCm}</td>
-          <td style={tdStyle}>{counts.exterior.timberLengthCm}</td>
-          <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>
-            {counts.total.timberLengthCm}
-          </td>
-        </tr>
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {allTypes.map((type) => (
+            <tr key={type}>
+              <td style={stickyTdStyle}>{type}</td>
+              {pours.map((pour) => (
+                <td key={pour.id} style={tdStyle}>
+                  {panels.byPour[pour.id]?.byType[type] ?? 0}
+                </td>
+              ))}
+              <td style={{ ...tdStyle, fontWeight: 600, background: "#f1f5f9" }}>
+                {panels.total.byType[type] ?? 0}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -562,3 +592,13 @@ const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collap
 const thStyle: React.CSSProperties = { padding: "4px 8px", textAlign: "center", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontWeight: 600 };
 const tdStyle: React.CSSProperties = { padding: "4px 8px", textAlign: "center", borderBottom: "1px solid #f1f5f9" };
 const tdLabelStyle: React.CSSProperties = { ...tdStyle, textAlign: "right", color: "#475569" };
+
+// The panel table can scroll horizontally with 6+ pours; "סוג" is pinned to
+// the physical right edge — where it already sits as the first column under
+// this panel's RTL layout — so it stays visible while the pour columns
+// scroll underneath it. A physical `right: 0` (not a logical inset) is
+// deliberate: it anchors to the screen edge the column already renders at,
+// regardless of any RTL scroll-direction quirks in a given browser.
+const stickyColumnStyle: React.CSSProperties = { position: "sticky", right: 0, zIndex: 1 };
+const stickyThStyle: React.CSSProperties = { ...thStyle, ...stickyColumnStyle };
+const stickyTdStyle: React.CSSProperties = { ...tdLabelStyle, ...stickyColumnStyle, background: "#fff" };

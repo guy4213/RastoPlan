@@ -1,10 +1,41 @@
-import type { Placement } from "@rastoplan/core";
+import { JUNCTION_RESTRICTED_FLAG, type Placement } from "@rastoplan/core";
+
+/** No `panelType`/catalog combination could fill the run at all — see selectPanels. */
+const GAP_OUT_OF_RANGE_FLAG = "gap-out-of-range";
 import { useProject } from "../state/ProjectContext.js";
 import { duplicatePlacementId } from "../state/placementId.js";
+import { useDraftField } from "./useDraftField.js";
+import { formatRounded, parseBoundedNumber } from "./numberDraft.js";
 
 export function SelectionPanel() {
   const { state, dispatch } = useProject();
   const placement = state.project.placements.find((p) => p.id === state.ui.selectedPlacementId) ?? null;
+
+  // Buffered so intermediate keystrokes (e.g. clearing the field to retype)
+  // never dispatch — an unbuffered field previously sent 0 on every clear,
+  // marking the placement "manual" for no reason.
+  const positionField = useDraftField<number>(placement?.offsetAlongEdge ?? 0, {
+    // Negative offsets are valid on an outer face that wraps past a corner;
+    // tileProject validates the committed integer against that face's actual
+    // run on recompute rather than applying a wrong global minimum here.
+    parse: (raw) => parseBoundedNumber(raw),
+    format: (n) => formatRounded(n),
+    // The field only ever shows/accepts whole centimeters, so two values that
+    // round to the same displayed integer are "the same edit" for dispatch
+    // purposes — this is what stops merely tabbing through the field (blur
+    // always commits) from re-dispatching and marking an untouched placement
+    // "manual".
+    equals: (a, b) => Math.round(a) === Math.round(b),
+    onCommit: (n) => {
+      if (!placement) return;
+      dispatch({
+        type: "update-placement",
+        placementId: placement.id,
+        patch: { offsetAlongEdge: Math.round(n) },
+      });
+    },
+  });
+
   if (!placement) return null;
 
   // Only the straight, in-stock panels are legal swaps. Corner panels are
@@ -42,17 +73,18 @@ export function SelectionPanel() {
           </select>
         </Row>
         <Row label="רוחב"><span>{placement.width} ס"מ</span></Row>
+        {placement.kind === "timber" && (
+          <Row label="אורך עץ">
+            <span>{placement.width} ס"מ</span>
+          </Row>
+        )}
         <Row label="מיקום">
           <input
             type="number"
-            value={Math.round(placement.offsetAlongEdge)}
-            onChange={(e) =>
-              dispatch({
-                type: "update-placement",
-                placementId: placement.id,
-                patch: { offsetAlongEdge: Number(e.target.value) },
-              })
-            }
+            value={positionField.value}
+            onChange={(e) => positionField.onChange(e.target.value)}
+            onBlur={positionField.onBlur}
+            onKeyDown={positionField.onKeyDown}
             style={inputStyle}
           />
         </Row>
@@ -67,9 +99,20 @@ export function SelectionPanel() {
             {placement.source === "manual" ? "ידני" : "אוטומטי"}
           </span>
         </Row>
-        {placement.flags.length > 0 && (
+        {placement.flags.includes(JUNCTION_RESTRICTED_FLAG) && (
+          <div style={{ padding: 6, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 4, fontSize: 11, color: "#b91c1c" }}>
+            {placement.panelType} מותר רק בקיר שנגמר בצומת T. הוצב כאן ידנית — יש לוודא שזה מכוון.
+          </div>
+        )}
+        {placement.flags.includes(GAP_OUT_OF_RANGE_FLAG) && (
+          <div style={{ padding: 6, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 4, fontSize: 11, color: "#b91c1c" }}>
+            לא נמצא שילוב תבניות לקטע הזה — המרווח הדרוש חורג מטווח העץ המותר
+            ({placement.width} ס"מ).
+          </div>
+        )}
+        {placement.flags.some((f) => f !== JUNCTION_RESTRICTED_FLAG && f !== GAP_OUT_OF_RANGE_FLAG) && (
           <div style={{ padding: 6, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 4, fontSize: 11 }}>
-            דגלים: {placement.flags.join(", ")}
+            דגלים: {placement.flags.filter((f) => f !== JUNCTION_RESTRICTED_FLAG && f !== GAP_OUT_OF_RANGE_FLAG).join(", ")}
           </div>
         )}
       </div>

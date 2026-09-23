@@ -80,7 +80,10 @@ describe("countAccessories — the customer's clamp formulas", () => {
     const allUnits = Object.values(panels.byType).reduce((a, b) => a + b, 0);
     const cornerUnits = panels.byType.C30x30 ?? 0;
 
-    expect(count.straightClamps).toBe((allUnits - cornerUnits) * 3);
+    // Timber fillers are tied in like a panel (3 clamps each). Since R90 became
+    // T-junction-only this plain rectangle closes its runs with R85 + 5cm timber.
+    expect(panels.timberPieces).toBeGreaterThan(0);
+    expect(count.straightClamps).toBe((allUnits - cornerUnits + panels.timberPieces) * 3);
   });
 
   it("L-shape: every one of the 6 corners gets a corner panel, convex ones included", () => {

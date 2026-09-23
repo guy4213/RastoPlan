@@ -11,7 +11,7 @@ export type {
 } from "./pairFaces.js";
 export { previewPairings, previewPairingByWallId } from "./previewPairing.js";
 export type { WallPairPreview } from "./previewPairing.js";
-export { retargetPairedWall, retargetWallThickness } from "./retargetPairedWall.js";
+export { outerContourWallId, retargetPairedWall, retargetWallThickness } from "./retargetPairedWall.js";
 export type { RetargetResult, RetargetThicknessResult } from "./retargetPairedWall.js";
 export { resolveWalls } from "./resolveWalls.js";
 export type {

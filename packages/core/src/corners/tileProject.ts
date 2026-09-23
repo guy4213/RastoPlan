@@ -1,9 +1,16 @@
-import type { Placement, Project, ProjectLayout, RegionSummary } from "../types.js";
+import type { Diagnostic, NodeType, Placement, Project, ProjectLayout, RegionSummary } from "../types.js";
 import { resolveWalls } from "../contours/resolveWalls.js";
 import type { ResolveOptions } from "../contours/constants.js";
 import { tileWallPair } from "../tiling/tileWallPair.js";
+import { blockedSpansFor, isPreservedManualPlacement } from "../tiling/manualPlacements.js";
+import {
+  JUNCTION_RESTRICTED_FLAG,
+  restrictedPanelMayLandOffJunction,
+  withJunctionRestrictionFlag,
+} from "../tiling/junctionRestriction.js";
 import { detectExternalCorners } from "../geometry/detectExternalCorners.js";
 import { placeCornerPanels } from "./placeCornerPanels.js";
+import type { FaceRun } from "./faceRuns.js";
 
 /** Bump when a change makes previously saved layouts wrong rather than merely stale. */
 /**
@@ -41,8 +48,15 @@ import { placeCornerPanels } from "./placeCornerPanels.js";
  *     wrong in every wall, so those layouts must not survive.
  * 13: re-entrant corners on a drawn exterior contour receive their required
  *     C30x30 panel. Version 12 can retain untileable 10cm end remnants there.
+ * 14: junction-restricted panels. R90 is selectable only on a wall segment
+ *     with a T junction at one of its ends (customer decision). Version 13 used
+ *     R90 anywhere, so its layouts carry panels the rule now forbids.
+ * 15: timber-gap range narrowed from 5–9cm to 1–5cm (customer decision,
+ *     13/9/2026). Version 14 could both fill gaps 1–4cm as gap-out-of-range
+ *     when they are now legal, and select combinations landing on a 6–9cm gap
+ *     that is no longer allowed.
  */
-export const ENGINE_VERSION = 13;
+export const ENGINE_VERSION = 15;
 
 export interface TileProjectResult {
   placements: Placement[];
@@ -83,10 +97,24 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
   const placements: Placement[] = [];
   const diagnostics = [...resolution.diagnostics, ...corners.diagnostics];
 
+  const endNodeTypesByWallId = wallEndNodeTypes(resolution);
+  const manual = keptManualPlacements(
+    project,
+    resolution.resolvedWalls,
+    edgeById,
+    corners.runs,
+    availablePanelCountsByPour,
+    endNodeTypesByWallId
+  );
+  diagnostics.push(...manual.diagnostics);
+  const manualIds = new Set(project.placements.filter((p) => p.source === "manual").map((p) => p.id));
+
   for (const resolvedWall of resolution.resolvedWalls) {
     const edge = edgeById.get(`edge:${resolvedWall.id}`);
     const runs = corners.runs.get(edge?.id ?? "");
     if (!edge || !runs) continue;
+    const manualOnEdge = manual.byEdgeId.get(edge.id) ?? [];
+    const endNodeTypes = endNodeTypesByWallId.get(resolvedWall.id) ?? [];
 
     // One panel row per DRAWN face. faceA is always the primary source line.
     // faceB is included only when it came from a real paired contour; an
@@ -113,10 +141,20 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
       catalog,
       rules,
       availability,
+      endNodeTypes,
+      ...(manualOnEdge.length > 0
+        ? { blocked: blockedSpansFor(manualOnEdge), manualPlacements: manualOnEdge }
+        : {}),
     });
+    // A regenerated id must never shadow a hand-edited placement that kept its
+    // old automatic id — selection and the face-twin sync both key on it.
+    for (const p of tiled.placements) {
+      while (manualIds.has(p.id)) p.id = `${p.id}:auto`;
+    }
     diagnostics.push(...tiled.diagnostics);
+    diagnostics.push(...offJunctionWarnings(tiled.placements, catalog, endNodeTypes, resolvedWall.id));
     consumeStraightPanels(tiled.placements, availability);
-    const missing = missingPanelCounts(tiled.placements);
+    const missing = missingPanelCounts([...manualOnEdge, ...tiled.placements]);
     if (Object.keys(missing).length > 0) {
       diagnostics.push({
         code: "inventory-straight-panel-shortage",
@@ -131,6 +169,7 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
 
     placements.push(
       ...corners.cornerPanels.filter((p) => p.edgeId === edge.id),
+      ...manualOnEdge,
       ...tiled.placements,
       ...corners.protrusions.filter((p) => p.edgeId === edge.id)
     );
@@ -154,7 +193,10 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
     // "walls that need formwork", and a wall that was only the far face of
     // another one would otherwise be counted a second time for struts.
     edges: activeEdges,
-    resolvedWalls: resolution.resolvedWalls,
+    resolvedWalls: resolution.resolvedWalls.map((resolvedWall) => ({
+      ...resolvedWall,
+      endNodeTypes: endNodeTypesByWallId.get(resolvedWall.id) ?? [],
+    })),
     regions: resolution.regions.map((r): RegionSummary => ({
       id: r.id,
       kind: r.kind,
@@ -167,6 +209,159 @@ export function tileProject(project: Project, options: ResolveOptions = {}): Til
   };
 
   return { placements, layout };
+}
+
+interface KeptManual {
+  byEdgeId: Map<string, Placement[]>;
+  diagnostics: Diagnostic[];
+}
+
+/**
+ * The hand-edited placements that survive this compute, grouped by edge, with
+ * their stock drawn from the pour's ledger BEFORE any automatic tiling.
+ *
+ * A manual placement is kept only when the wall it was placed on still
+ * resolves to the same tiled edge in the same pour. Anything else — a wall that
+ * was split, re-paired or reassigned, or a hand-swapped corner panel, which the
+ * corners layer always re-derives — is dropped and reported per wall, so a
+ * user-made change never disappears without a message.
+ *
+ * Mutates `availabilityByPour` on purpose: manual units are already on the
+ * wall, so the automatic fill must only see what is left.
+ */
+function keptManualPlacements(
+  project: Project,
+  resolvedWalls: { id: string; pourId: string }[],
+  edgeById: Map<string, { id: string }>,
+  runs: Map<string, Record<Placement["side"], FaceRun>>,
+  availabilityByPour: Record<string, Record<string, number>> | undefined,
+  endNodeTypesByWallId: Map<string, NodeType[]>
+): KeptManual {
+  const byEdgeId = new Map<string, Placement[]>();
+  const diagnostics: Diagnostic[] = [];
+  const manual = project.placements.filter((p) => p.source === "manual");
+  if (manual.length === 0) return { byEdgeId, diagnostics };
+
+  const pourByEdgeId = new Map(
+    resolvedWalls
+      .filter((w) => edgeById.has(`edge:${w.id}`) && runs.has(`edge:${w.id}`))
+      .map((w) => [`edge:${w.id}`, w.pourId])
+  );
+
+  const droppedByWall = new Map<string, number>();
+  for (const placement of manual) {
+    const pourId = pourByEdgeId.get(placement.edgeId);
+    const faceRun = runs.get(placement.edgeId)?.[placement.side];
+    const placementEnd = placement.offsetAlongEdge + placement.width;
+    const insideRun =
+      faceRun !== undefined &&
+      Number.isFinite(placement.offsetAlongEdge) &&
+      Number.isFinite(placement.width) &&
+      placement.width > 0 &&
+      Number.isInteger(placement.offsetAlongEdge) &&
+      Number.isInteger(placement.width) &&
+      placement.offsetAlongEdge >= faceRun.startOffset - 1e-6 &&
+      placementEnd <= faceRun.startOffset + faceRun.clearLength + 1e-6;
+    if (
+      !isPreservedManualPlacement(placement) ||
+      pourId === undefined ||
+      pourId !== placement.pourId ||
+      !insideRun
+    ) {
+      droppedByWall.set(placement.wallId, (droppedByWall.get(placement.wallId) ?? 0) + 1);
+      continue;
+    }
+
+    // Engine flags on a hand-edited item are stale by now; only the stock
+    // check below is re-derived for it.
+    let flags: string[] = [];
+    const ledger = availabilityByPour?.[pourId];
+    if (ledger && placement.kind === "panel" && placement.panelType) {
+      if ((ledger[placement.panelType] ?? 0) > 0) ledger[placement.panelType] = ledger[placement.panelType]! - 1;
+      else flags = ["inventory-shortage"];
+    }
+    // Allowed but flagged (approved rule): a hand-placed panel the junction
+    // restriction forbids here stays where the user put it and shows red.
+    const kept = withJunctionRestrictionFlag(
+      { ...placement, flags },
+      project.catalog,
+      endNodeTypesByWallId.get(placement.wallId) ?? []
+    );
+    if (kept.flags.includes(JUNCTION_RESTRICTED_FLAG)) {
+      diagnostics.push({
+        code: "manual-panel-junction-restricted",
+        severity: "warning",
+        message: `${placement.panelType} הוצב ידנית בקיר שאינו בצומת מותרת — הכלל מתיר אותו רק בצומת T`,
+        wallIds: [placement.wallId],
+        nodeIds: [],
+      });
+    }
+    const list = byEdgeId.get(placement.edgeId) ?? [];
+    list.push(kept);
+    byEdgeId.set(placement.edgeId, list);
+  }
+
+  for (const [wallId, count] of droppedByWall) {
+    diagnostics.push({
+      code: "manual-placement-dropped",
+      severity: "warning",
+      message: `${count} פריטים שנערכו ידנית לא נשמרו בקיר זה — הקיר השתנה, המיקום יצא מטווח הקיר או שמדובר בפאנל פינה, והם חושבו מחדש`,
+      wallIds: [wallId],
+      nodeIds: [],
+    });
+  }
+  return { byEdgeId, diagnostics };
+}
+
+/**
+ * Node types at the ends of every drawn contour of each resolved wall, keyed by
+ * resolved wall id. Both contours of a paired wall count: on a plan traced as
+ * two contours a T junction may sit on either line, and the wall is at that T
+ * either way.
+ */
+function wallEndNodeTypes(resolution: ReturnType<typeof resolveWalls>): Map<string, NodeType[]> {
+  const nodeTypeById = new Map(resolution.nodes.map((node) => [node.id, node.type]));
+  const edgeByWallId = new Map(resolution.edges.map((edge) => [edge.wallId, edge]));
+  const byWallId = new Map<string, NodeType[]>();
+  for (const resolvedWall of resolution.resolvedWalls) {
+    const types = new Set<NodeType>();
+    for (const wallId of [resolvedWall.sourceWallId, ...resolvedWall.consumedWallIds]) {
+      const edge = edgeByWallId.get(wallId);
+      if (!edge) continue;
+      for (const nodeId of [edge.nodeA, edge.nodeB]) {
+        const type = nodeTypeById.get(nodeId);
+        if (type) types.add(type);
+      }
+    }
+    byWallId.set(resolvedWall.id, [...types].sort());
+  }
+  return byWallId;
+}
+
+/**
+ * One warning per wall where the engine chose a junction-restricted panel on a
+ * segment that qualifies at one end only (e.g. T at one end, L at the other).
+ * Approved: allowed — the middle rule decides where it lands — but reported.
+ */
+function offJunctionWarnings(
+  placements: Placement[],
+  catalog: Project["catalog"],
+  endNodeTypes: readonly NodeType[],
+  wallId: string
+): Diagnostic[] {
+  const types = new Set<string>();
+  for (const placement of placements) {
+    if (placement.kind !== "panel") continue;
+    const panel = catalog.panels.find((p) => p.type === placement.panelType);
+    if (panel && restrictedPanelMayLandOffJunction(panel, endNodeTypes)) types.add(panel.type);
+  }
+  return [...types].map((type) => ({
+    code: "restricted-panel-off-junction",
+    severity: "warning" as const,
+    message: `${type} נבחר בקיר שבקצה אחד שלו צומת T ובקצה השני לא — ייתכן שהוא ממוקם בקצה שאינו צומת T`,
+    wallIds: [wallId],
+    nodeIds: [],
+  }));
 }
 
 /** One independent stock ledger per pour: the same equipment is reused later. */

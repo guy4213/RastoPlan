@@ -8,7 +8,7 @@ import {
   perpendicularDistance,
 } from "@rastoplan/core";
 import type { Action, AppState } from "./project.js";
-import { initialAppState, initialProject, reduce } from "./project.js";
+import { initialAppState, initialProject, manualPlacementWalls, reduce } from "./project.js";
 
 /** The 400x300 room traced as two contours `t` apart, as the user would draw it. */
 function twoContourRoom(t: number, pourId = "pour-1"): Wall[] {
@@ -284,13 +284,36 @@ describe("update-wall thickness — the edit must survive the next compute", () 
     expect(after.project.layout?.resolvedWalls).toHaveLength(4);
   });
 
-  it("moves the far contour and leaves the edited wall where it is", () => {
+  it("moves the inner contour and leaves the outer one exactly where it was drawn (13/9/2026 customer decision)", () => {
+    // Once a layout exists, the outer contour is known and never moves — the
+    // drawn outer dimensions are what's on the engineering plan. This is a
+    // reversal of the pre-13/9/2026 rule (whichever wall the user selected
+    // stayed put): see retargetPairedWall.test.ts for the fallback that still
+    // applies before any compute has run, for a partition with no outer face,
+    // and for a T-split segment where moving it alone would tear the corner.
+    const before = run(stateWith(twoContourRoom(10)), { type: "compute" });
+    const after = run(before, {
+      type: "update-wall",
+      wallId: "in-bottom",
+      patch: { thickness: 25 },
+    });
+
+    expect(wallIn(after, "out-bottom").innerLine).toEqual(wallIn(before, "out-bottom").innerLine);
+    expect(wallIn(after, "in-bottom").innerLine).not.toEqual(wallIn(before, "in-bottom").innerLine);
+    // out-bottom is drawn at y=-10 (twoContourRoom's original 10cm gap); a
+    // 25cm gap from that fixed line puts the moved inner wall at y=15.
+    expect(wallIn(after, "in-bottom").innerLine[0]!.y).toBe(15);
+  });
+
+  it("falls back to moving the far contour instead when there is no layout yet to name the outer one", () => {
+    // The exact pre-13/9/2026 behavior, still correct here: before the first
+    // "חשב" there is nothing to consult, so the edited wall stays put.
     const before = stateWith(twoContourRoom(10));
-    const after = run(
-      before,
-      { type: "compute" },
-      { type: "update-wall", wallId: "in-bottom", patch: { thickness: 25 } }
-    );
+    const after = run(before, {
+      type: "update-wall",
+      wallId: "in-bottom",
+      patch: { thickness: 25 },
+    });
 
     expect(wallIn(after, "in-bottom").innerLine).toEqual(wallIn(before, "in-bottom").innerLine);
     expect(wallIn(after, "out-bottom").innerLine[0]!.y).toBe(-25);
@@ -1005,5 +1028,172 @@ describe("imported inventory", () => {
       "פנאל 50/300": 0,
       "פנאל 40/300": 3,
     });
+  });
+});
+
+describe("hand-edited placements survive a recompute", () => {
+  /** Compute, then change the second panel of the bottom inner wall to an R40. */
+  function computedWithManualEdit() {
+    const computed = run(stateWith(twoContourRoom(20)), { type: "compute" });
+    const row = computed.project.placements
+      .filter((p) => p.wallId === "in-bottom" && p.side === "faceA" && p.kind === "panel")
+      .sort((a, b) => a.offsetAlongEdge - b.offsetAlongEdge);
+    const target = row[1]!;
+    const edited = reduce(computed, {
+      type: "update-placement",
+      placementId: target.id,
+      patch: { panelType: "R40", width: 40 },
+    });
+    return { edited, targetId: target.id };
+  }
+
+  it("keeps the manual panel and its synced twin through the next compute", () => {
+    const { edited, targetId } = computedWithManualEdit();
+    const manualBefore = edited.project.placements.filter((p) => p.source === "manual");
+    expect(manualBefore).toHaveLength(2);
+
+    const recomputed = reduce(edited, { type: "compute" });
+    const manualAfter = recomputed.project.placements.filter((p) => p.source === "manual");
+
+    expect(manualAfter.map((p) => [p.id, p.panelType, p.offsetAlongEdge, p.width])).toEqual(
+      manualBefore.map((p) => [p.id, p.panelType, p.offsetAlongEdge, p.width])
+    );
+    expect(recomputed.project.placements.find((p) => p.id === targetId)?.source).toBe("manual");
+    expect(recomputed.ui.notice).toBeNull();
+  });
+
+  it("keeps manual items through an edit that does not touch their wall", () => {
+    const { edited } = computedWithManualEdit();
+    // A loose wall far from the room: nothing about the room's walls changes.
+    const afterEdit = reduce(edited, { type: "add-wall", a: { x: 2000, y: 0 }, b: { x: 2300, y: 0 } });
+
+    expect(afterEdit.project.layout).toBeUndefined();
+    expect(afterEdit.project.placements.every((p) => p.source === "manual")).toBe(true);
+    expect(afterEdit.project.placements).toHaveLength(2);
+    expect(afterEdit.ui.layoutDirty).toBe(true);
+    expect(afterEdit.ui.notice).toBeNull();
+
+    const recomputed = reduce(afterEdit, { type: "compute" });
+    expect(recomputed.project.placements.filter((p) => p.source === "manual")).toHaveLength(2);
+  });
+
+  it("keeps manual items when only the inventory changes", () => {
+    const { edited } = computedWithManualEdit();
+    const afterStock = reduce(edited, { type: "set-inventory", inventory: { "פנאל 40/300": 5 } });
+    expect(afterStock.project.placements.filter((p) => p.source === "manual")).toHaveLength(2);
+    expect(afterStock.ui.layoutDirty).toBe(true);
+  });
+
+  it("drops manual items whose wall changed, and names the wall in the notice", () => {
+    const { edited } = computedWithManualEdit();
+    const moved = reduce(edited, {
+      type: "update-wall",
+      wallId: "in-bottom",
+      patch: { innerLine: [{ x: 0, y: 0 }, { x: 380, y: 0 }] },
+    });
+
+    expect(moved.project.placements.filter((p) => p.source === "manual")).toEqual([]);
+    expect(moved.ui.notice).toContain("2 פריטים שנערכו ידנית הוסרו");
+    expect(moved.ui.notice).toContain('400 ס"מ');
+  });
+
+  it("drops manual items when their wall is deleted", () => {
+    const { edited } = computedWithManualEdit();
+    const deleted = reduce(edited, { type: "delete-wall", wallId: "in-bottom" });
+    expect(deleted.project.placements).toEqual([]);
+    expect(deleted.ui.notice).toContain("הוסרו");
+  });
+
+  it("describes the walls carrying manual items for the pre-compute warning", () => {
+    const { edited } = computedWithManualEdit();
+    const summary = manualPlacementWalls(edited.project);
+    expect(summary.count).toBe(2);
+    expect(summary.wallIds).toEqual(["in-bottom"]);
+    expect(summary.message).toContain('400 ס"מ');
+    expect(manualPlacementWalls(projectWith(twoContourRoom(20))).message).toBeNull();
+  });
+
+  it("asks for a compute when a saved project carries manual items but no layout", () => {
+    const { edited } = computedWithManualEdit();
+    const saved = reduce(edited, { type: "add-wall", a: { x: 2000, y: 0 }, b: { x: 2300, y: 0 } }).project;
+    const reopened = initialAppState(saved);
+    expect(reopened.project.placements.length).toBeGreaterThan(0);
+    expect(reopened.ui.layoutDirty).toBe(true);
+  });
+});
+
+describe("R90 is restricted to T junctions (hand edits)", () => {
+  it("flags a panel swapped to R90 on a wall with no T the moment it is edited, and clears it on swap back", () => {
+    const computed = run(stateWith(twoContourRoom(20)), { type: "compute" });
+    const target = computed.project.placements.find(
+      (p) => p.wallId === "in-bottom" && p.side === "faceA" && p.kind === "panel" && p.panelType === "R75"
+    )!;
+
+    const toR90 = reduce(computed, {
+      type: "update-placement",
+      placementId: target.id,
+      patch: { panelType: "R90", width: 90 },
+    });
+    const flagged = toR90.project.placements.filter((p) => p.flags.includes("junction-restricted"));
+    // The edited panel and its synced twin on the far face.
+    expect(flagged).toHaveLength(2);
+    expect(toR90.project.placements.find((p) => p.id === target.id)!.source).toBe("manual");
+
+    const back = reduce(toR90, {
+      type: "update-placement",
+      placementId: target.id,
+      patch: { panelType: "R75", width: 75 },
+    });
+    expect(back.project.placements.some((p) => p.flags.includes("junction-restricted"))).toBe(false);
+  });
+
+  it("keeps the manual R90 through a recompute, still flagged", () => {
+    const computed = run(stateWith(twoContourRoom(20)), { type: "compute" });
+    const target = computed.project.placements.find(
+      (p) => p.wallId === "in-bottom" && p.side === "faceA" && p.kind === "panel" && p.panelType === "R75"
+    )!;
+    const recomputed = run(
+      computed,
+      { type: "update-placement", placementId: target.id, patch: { panelType: "R90", width: 90 } },
+      { type: "compute" }
+    );
+    const kept = recomputed.project.placements.find((p) => p.id === target.id)!;
+    expect(kept.panelType).toBe("R90");
+    expect(kept.flags).toContain("junction-restricted");
+  });
+});
+
+describe("timber-gap range narrowed to 1–5cm on load (13/9/2026 customer decision)", () => {
+  it("narrows a project saved with the old 5–9cm default and says nothing about it", () => {
+    const saved = projectWith(twoContourRoom(20));
+    const legacy: Project = {
+      ...saved,
+      schemaVersion: 4,
+      rules: { ...saved.rules, timberGapMin: 5, timberGapMax: 9 },
+    };
+
+    const reopened = initialAppState(legacy);
+    expect(reopened.project.rules.timberGapMin).toBe(1);
+    expect(reopened.project.rules.timberGapMax).toBe(5);
+    expect(reopened.ui.notice).toBeNull();
+  });
+
+  it("leaves a project already carrying a non-default gap untouched, and warns about it", () => {
+    const saved = projectWith(twoContourRoom(20));
+    const custom: Project = {
+      ...saved,
+      schemaVersion: 4,
+      rules: { ...saved.rules, timberGapMin: 2, timberGapMax: 6 },
+    };
+
+    const reopened = initialAppState(custom);
+    expect(reopened.project.rules.timberGapMin).toBe(2);
+    expect(reopened.project.rules.timberGapMax).toBe(6);
+    expect(reopened.ui.notice).toContain("מותאם אישית");
+  });
+
+  it("says nothing once a project is already at the current schema", () => {
+    const saved = projectWith(twoContourRoom(20));
+    expect(initialAppState(saved).ui.notice).toBeNull();
   });
 });

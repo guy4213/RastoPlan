@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Wall } from "../../types.js";
-import { DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
+import { ACCESSORY_ITEMS, DEFAULT_ACCESSORY_RULES, DEFAULT_PANEL_CATALOG } from "../../defaults.js";
 import { rectangleWalls } from "../../geometry/__tests__/fixtures.js";
 import { tileProject } from "../../corners/tileProject.js";
 import { countAccessoriesByPour, countPanelsByPour } from "../../accessories/countByPour.js";
@@ -12,6 +12,17 @@ const header = {
   projectName: "קרית גת בניין B",
   note: "קומה טיפוסית",
   date: "11.06.2026",
+};
+
+const EMPTY_ACCESSORY_COUNT = {
+  cornerClamps: 0,
+  straightClamps: 0,
+  dywidagRods: 0,
+  dywidagRodsStandard: 0,
+  dywidagRodsLong: 0,
+  nuts: 0,
+  struts: 0,
+  craneAdapters: 0,
 };
 
 function inputFor(walls: Wall[], pourIds: string[], pourNames: string[]): BuildBomTemplateInput {
@@ -45,29 +56,19 @@ function singlePourTimberPieces(): number {
 }
 
 describe("buildBomTemplate — product rows", () => {
-  it("lists every product in the customer's exact order and wording", () => {
+  it("lists only the products actually used, in the customer's order and wording", () => {
     const labels = singlePourTemplate().rows.map((r) => r.label);
 
+    // The rectangle fixture only ever uses R40/R75/R85 straight panels and the
+    // leading C30x30 corner — every other catalog row is zero in this pour and
+    // is omitted entirely rather than kept at 0 (approved rule change: a row
+    // with zero quantity in every pour, and therefore in the MAX/"required"
+    // column, does not appear at all).
     expect(labels).toEqual([
-      "פנאל 20/300",
-      "פנאל 25/300",
-      "פנאל 30/300",
-      "פנאל 35/300",
       "פנאל 40/300",
-      "פנאל 45/300",
-      "פנאל 50/300",
-      "פנאל 55/300",
-      "פנאל 60/300",
-      "פנאל 65/300",
-      "פנאל 70/300",
       "פנאל 75/300",
-      "פנאל 80/300",
       "פנאל 85/300",
-      "פנאל 90/300",
-      "פנאל 20/20/300",
-      "פנאל 25/25/300",
       "פנאל 30/30/300",
-      "חצאי פנאלים :",
       "אביזרים :",
       "קלמרה רגילה לתבניות GT",
       "קלמרה פינתית לתבניות GT",
@@ -79,15 +80,28 @@ describe("buildBomTemplate — product rows", () => {
     ]);
   });
 
-  it("keeps unused product rows at 0 rather than dropping them", () => {
+  it("omits a product row entirely once its quantity is zero in every pour", () => {
     const rows = new Map(singlePourTemplate().rows.map((r) => [r.label, r]));
     // Only the leading C30x30 is ever auto-placed, so the smaller corner
-    // sizes stay on the sheet at zero — exactly as in the customer's files.
-    const unused = rows.get("פנאל 20/20/300")!;
+    // sizes never carry a quantity in this fixture and no longer get a row.
+    expect(rows.has("פנאל 20/20/300")).toBe(false);
+    expect(rows.has("פנאל 25/25/300")).toBe(false);
+    expect(rows.has("פנאל 20/300")).toBe(false);
+  });
 
-    expect(unused.requiredQty).toBe(0);
-    expect(unused.totalSqm).toBe(0);
-    expect(unused.perPour).toEqual([0]);
+  it("never reproduces the customer's dead 'חצאי פנאלים :' header — it labels nothing in their own sheet either", () => {
+    // Explicit decision (Guy, 23/9/2026): unlike "אביזרים :", which always
+    // introduces real accessory rows, this header never had any half-panel
+    // product row under it even in the customer's own Priority template — so
+    // it is dropped unconditionally, not just when its (nonexistent) group
+    // is empty.
+    const template = singlePourTemplate();
+    expect(template.rows.some((r) => r.label === "חצאי פנאלים :")).toBe(false);
+  });
+
+  it("keeps the accessories section header only when at least one accessory row survives", () => {
+    const template = singlePourTemplate();
+    expect(template.rows.some((r) => r.label === "אביזרים :")).toBe(true);
   });
 
   it("copies finite inventory by exact product label and treats missing rows as zero", () => {
@@ -100,7 +114,11 @@ describe("buildBomTemplate — product rows", () => {
 
     expect(rows.get("פנאל 75/300")?.inventoryQty).toBe(12);
     expect(rows.get("קלמרה רגילה לתבניות GT")?.inventoryQty).toBe(40);
-    expect(rows.get("פנאל 70/300")?.inventoryQty).toBe(0);
+    // A row that survives (nonzero required qty) but has no matching
+    // inventory entry defaults to 0 — distinct from a zero-quantity row,
+    // which is dropped from the sheet entirely regardless of inventory.
+    expect(rows.get("פנאל 85/300")?.inventoryQty).toBe(0);
+    expect(rows.has("פנאל 70/300")).toBe(false);
   });
 });
 
@@ -109,12 +127,32 @@ describe("buildBomTemplate — מר לתבנית", () => {
     const rows = new Map(singlePourTemplate().rows.map((r) => [r.label, r]));
     expect(rows.get("פנאל 75/300")?.sqmPerUnit).toBe(2.25);
     expect(rows.get("פנאל 40/300")?.sqmPerUnit).toBe(1.2);
-    expect(rows.get("פנאל 90/300")?.sqmPerUnit).toBe(2.7);
+    expect(rows.get("פנאל 85/300")?.sqmPerUnit).toBe(2.55);
   });
 
   it("corner panel: BOTH legs — 30/30/300 is 1.8m², not 0.9", () => {
     const rows = new Map(singlePourTemplate().rows.map((r) => [r.label, r]));
     expect(rows.get("פנאל 30/30/300")?.sqmPerUnit).toBe(1.8);
+  });
+
+  it("corner panel m² covers both legs at every size, once the row actually has a quantity", () => {
+    // The rectangle fixture never places a 20 or 25 leg corner (only C30x30
+    // auto-places), so those rows are omitted there under the new rule.
+    // Feed synthetic per-pour counts instead to check the m² formula itself.
+    const synthetic = buildBomTemplate({
+      header,
+      catalog: DEFAULT_PANEL_CATALOG,
+      pourIds: ["pour-1"],
+      pourNames: ["יציקה 1"],
+      panels: {
+        byPour: {
+          "pour-1": { byType: { C25x25: 2, C20x20: 3 }, timberPieces: 0, timberLengthCm: 0 },
+        },
+        total: { byType: { C25x25: 2, C20x20: 3 }, timberPieces: 0, timberLengthCm: 0 },
+      },
+      accessories: { byPour: {}, total: EMPTY_ACCESSORY_COUNT },
+    });
+    const rows = new Map(synthetic.rows.map((r) => [r.label, r]));
     expect(rows.get("פנאל 25/25/300")?.sqmPerUnit).toBe(1.5);
     expect(rows.get("פנאל 20/20/300")?.sqmPerUnit).toBe(1.2);
   });
@@ -205,6 +243,66 @@ describe("buildBomTemplate — quantities", () => {
   });
 });
 
+describe("buildBomTemplate — zero-row omission leaves every surviving quantity untouched", () => {
+  const { walls, pours } = twoPourWalls();
+  const pourIds = pours.map((p) => p.id);
+  const pourNames = pours.map((p) => p.name);
+  const input = inputFor(walls, pourIds, pourNames);
+  const template = buildBomTemplate(input);
+  const panelByBomLabel = new Map(DEFAULT_PANEL_CATALOG.panels.map((p) => [p.bomLabel, p]));
+
+  it("keeps K10 (straight clamps, incl. timber×3) and K30 (corner clamps) identical to the raw per-pour counts", () => {
+    const straightClampRow = template.rows.find(
+      (r) => r.label === ACCESSORY_ITEMS.straightClamp.label
+    )!;
+    const cornerClampRow = template.rows.find(
+      (r) => r.label === ACCESSORY_ITEMS.cornerClamp.label
+    )!;
+    expect(straightClampRow).toBeDefined();
+    expect(cornerClampRow).toBeDefined();
+
+    pourIds.forEach((pourId, i) => {
+      const byType = input.panels.byPour[pourId]?.byType ?? {};
+      const timberPieces = input.panels.byPour[pourId]?.timberPieces ?? 0;
+      let straightUnits = 0;
+      let cornerUnits = 0;
+      for (const [type, count] of Object.entries(byType)) {
+        const kind = DEFAULT_PANEL_CATALOG.panels.find((p) => p.type === type)?.kind;
+        if (kind === "straight") straightUnits += count;
+        else cornerUnits += count;
+      }
+
+      // Same formula as the pre-omission sheet: K10 = 3 × (straight panels + timber pieces).
+      expect(straightClampRow.perPour[i]).toBe((straightUnits + timberPieces) * 3);
+      expect(cornerClampRow.perPour[i]).toBe(cornerUnits * 3);
+      // And it matches the accessory engine's own bucket exactly — the row
+      // filter never edits a kept row's numbers, only removes all-zero rows.
+      expect(straightClampRow.perPour[i]).toBe(
+        input.accessories.byPour[pourId]?.straightClamps ?? 0
+      );
+      expect(cornerClampRow.perPour[i]).toBe(input.accessories.byPour[pourId]?.cornerClamps ?? 0);
+    });
+  });
+
+  it("keeps every surviving product row's per-pour numbers equal to the raw panel counts", () => {
+    for (const row of template.rows) {
+      if (row.isSectionLabel) continue;
+      // Nothing kept is secretly empty — omission removes all-zero rows, so
+      // whatever remains must have a real quantity somewhere.
+      expect(row.perPour.some((v) => v !== 0), row.label).toBe(true);
+      expect(row.requiredQty, row.label).toBe(Math.max(...row.perPour));
+
+      const panel = panelByBomLabel.get(row.label);
+      if (!panel) continue;
+      pourIds.forEach((pourId, i) => {
+        expect(row.perPour[i], `${row.label} @ ${pourId}`).toBe(
+          input.panels.byPour[pourId]?.byType[panel.type] ?? 0
+        );
+      });
+    }
+  });
+});
+
 describe("buildBomTemplate — total m²", () => {
   it("sums the panel rows only, like the sheet's =SUM(D9:D26)", () => {
     const template = singlePourTemplate();
@@ -246,7 +344,7 @@ describe("toGrid — sheet layout", () => {
     const template = singlePourTemplate();
     const grid = toGrid(template);
 
-    expect(grid[8]?.[0]).toBe("פנאל 20/300");
+    expect(grid[8]?.[0]).toBe("פנאל 40/300");
     expect(grid).toHaveLength(8 + template.rows.length);
     const width = grid[7]!.length;
     for (const row of grid) expect(row).toHaveLength(width);

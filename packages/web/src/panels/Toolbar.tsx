@@ -1,8 +1,11 @@
-import { useState } from "react";
-import type { Point } from "@rastoplan/core";
+import { useCallback, useState } from "react";
+import { manualPlacementWalls } from "../state/project.js";
+import type { Point, PrintPageSize } from "@rastoplan/core";
 import { useProject, type SaveStatus } from "../state/ProjectContext.js";
 import { ProjectsModal } from "./ProjectsModal.js";
 import { AccountMenu } from "./AccountMenu.js";
+import { PrintPlanDialog } from "../export/print/PrintPlanDialog.js";
+import { printPlan } from "../export/print/printPlan.js";
 
 interface FreeEndpoint {
   wallId: string;
@@ -37,6 +40,26 @@ export function Toolbar() {
   const { tool, layoutDirty, activePourId, units, orthoLock } = state.ui;
   const [notice, setNotice] = useState<string | null>(null);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  // Stable identity: the dialog's focus effect depends on it, and a fresh
+  // arrow on every toolbar render (autosave status, notices) would bounce focus.
+  const closePrintDialog = useCallback(() => setPrintDialogOpen(false), []);
+
+  const canExportPdf = !!state.project.layout && state.project.placements.length > 0;
+
+  const handleChoosePrintPage = (page: PrintPageSize) => {
+    setPrintDialogOpen(false);
+    printPlan({
+      projectName: state.project.name,
+      walls: state.project.walls,
+      pours: state.project.pours,
+      placements: state.project.placements,
+      layout: state.project.layout,
+      page,
+      cornerProtrusionCm: state.project.rules.outerCornerProtrusionCm,
+      cornerLapGapCm: state.project.rules.outerCornerLapGapCm,
+    });
+  };
 
   const showNotice = (msg: string) => {
     setNotice(msg);
@@ -185,7 +208,13 @@ export function Toolbar() {
         <button
           type="button"
           disabled={state.project.walls.length === 0}
-          onClick={() => dispatch({ type: "compute" })}
+          onClick={() => {
+            // Approved rule: hand-edited items survive the recompute, and the
+            // user is told which walls carry them before it runs.
+            const manual = manualPlacementWalls(state.project);
+            if (manual.message && !window.confirm(manual.message)) return;
+            dispatch({ type: "compute" });
+          }}
           style={{
             padding: "8px 16px",
             background: state.project.walls.length === 0 ? "#e2e8f0" : "#0f172a",
@@ -199,9 +228,32 @@ export function Toolbar() {
         >
           חשב
         </button>
+        <button
+          type="button"
+          disabled={!canExportPdf}
+          onClick={() => setPrintDialogOpen(true)}
+          title={canExportPdf ? "ייצוא תוכנית להדפסה" : "יש להריץ חשב לפני ייצוא PDF"}
+          style={{
+            padding: "8px 16px",
+            background: canExportPdf ? "#fff" : "#f8fafc",
+            color: canExportPdf ? "#0f172a" : "#94a3b8",
+            border: `1px solid ${canExportPdf ? "#cbd5e1" : "#e2e8f0"}`,
+            borderRadius: 4,
+            fontWeight: 600,
+            cursor: canExportPdf ? "pointer" : "not-allowed",
+            fontFamily: "inherit",
+          }}
+        >
+          ייצוא PDF
+        </button>
         <AccountMenu />
       </div>
       <ProjectsModal open={projectsOpen} onClose={() => setProjectsOpen(false)} />
+      <PrintPlanDialog
+        open={printDialogOpen}
+        onClose={closePrintDialog}
+        onChoose={handleChoosePrintPage}
+      />
     </header>
   );
 }

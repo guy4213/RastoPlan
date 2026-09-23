@@ -82,21 +82,26 @@ describe("alignment against the reference drawing", () => {
     expect(broken).toEqual([]);
   });
 
-  it("finds a buildable layout for all but three known end segments", () => {
-    // 163 of the 166 pairs tile cleanly. The three that do not are both cases
-    // where the exclusive end comes out shorter than any panel and longer than
-    // the timber range, and they are left flagged rather than quietly absorbed:
+  it("finds a buildable layout for all but two known end segments", () => {
+    // 164 of the 166 pairs tile cleanly. The remaining case is where the
+    // exclusive end comes out shorter than any panel and longer than the
+    // timber range, and it is left flagged rather than quietly absorbed:
     //
     //   A[0,195] B[10,160]  (x2) — a 10cm head on face A. The drawing builds
     //     this differently: it lets BOTH faces carry a head (40 and 30) that
     //     meet at a common seam at 40, instead of starting the shared stretch
     //     at the raw intersection. That is a rule this engine does not have.
-    //   A[34,359] B[0,360]        — a 1cm tail on face B, which is measurement
-    //     noise: the label-derived edges are only good to about a centimetre.
     //
-    // Both are open questions for the next stage, not silent failures — see
-    // docs/plan-parallel-formwork.md. Locking the count here means a fourth one
-    // appearing is a regression somebody has to look at.
+    // A[34,359] B[0,360] — a 1cm tail on face B that used to fall in this same
+    // bucket (untileable: shorter than any panel, longer than the old 5–9cm
+    // timber range) is no longer flagged. The narrower 1–5cm range (customer
+    // decision, 13/9/2026) makes a bare 1cm timber fill legal on its own, so
+    // this end is now absorbed rather than left as a remainder — a real
+    // behavioural change from the gap narrowing, not a fix to this engine.
+    //
+    // The remaining case is an open question for the next stage, not a silent
+    // failure — see docs/plan-parallel-formwork.md. Locking the count here
+    // means a third one appearing is a regression somebody has to look at.
     const flagged: string[] = [];
     for (const [aLo, aHi, bLo, bHi] of REFERENCE_FACE_SPANS) {
       const { diagnostics } = tile(aLo, aHi, bLo, bHi);
@@ -105,11 +110,10 @@ describe("alignment against the reference drawing", () => {
     expect(flagged).toEqual([
       "[0,195] vs [10,160]: face-alignment-remainder",
       "[0,195] vs [10,160]: face-alignment-remainder",
-      "[34,359] vs [0,360]: face-alignment-remainder",
     ]);
   });
 
-  it("keeps the shared stretch aligned even on the three flagged pairs", () => {
+  it("keeps the shared stretch aligned on the flagged pair, and on the now-absorbed 1cm tail", () => {
     // The point of flagging an end rather than re-planning the wall: whatever
     // is wrong at one corner must not disturb the rest of the run.
     for (const [aLo, aHi, bLo, bHi] of [

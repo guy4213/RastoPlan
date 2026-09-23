@@ -13,11 +13,13 @@ import {
   DEFAULT_PANEL_CATALOG,
   DEFAULT_POUR_THICKNESS_CM,
   ENGINE_VERSION,
+  hasNonDefaultTimberGapBeforeMigration,
   migrateProject,
   previewPairingByWallId,
   retargetWallThickness,
   splitWallsAtJunctions,
   tileProject,
+  withJunctionRestrictionFlag,
 } from "@rastoplan/core";
 
 export type Tool = "select" | "draw-wall" | "weld";
@@ -124,7 +126,7 @@ export function initialAppState(project: Project): AppState {
       selectedWallIds: [],
       selectedPlacementId: null,
       view: { scale: 0.5, offset: { x: 100, y: 100 } },
-      layoutDirty: opened.project.placements.length === 0 && opened.project.walls.length > 0,
+      layoutDirty: isLayoutMissing(opened.project),
       units: "cm",
       notice: opened.notice,
       // Off by default, so a fresh session draws exactly as it did before the
@@ -132,6 +134,26 @@ export function initialAppState(project: Project): AppState {
       orthoLock: false,
     },
   };
+}
+
+/**
+ * Flags a hand-edited panel the junction restriction forbids on its wall the
+ * moment it is edited — not only at the next compute — using the end node
+ * types the engine recorded on the layout. Without a layout the ends are
+ * unknown and the flag is left for compute to decide.
+ */
+function withJunctionFlag(project: Project, placement: Placement): Placement {
+  const endNodeTypes = project.layout?.resolvedWalls.find((w) => w.id === placement.wallId)?.endNodeTypes;
+  return withJunctionRestrictionFlag(placement, project.catalog, endNodeTypes);
+}
+
+/**
+ * A drawing with no current layout. Manual placements can outlive the layout
+ * they were made in (an edit to another wall keeps them), so an empty placement
+ * list is no longer the only sign that compute is due.
+ */
+function isLayoutMissing(project: Project): boolean {
+  return project.walls.length > 0 && (project.placements.length === 0 || !project.layout);
 }
 
 export type Action =
@@ -177,6 +199,94 @@ function withUpdatedAt(project: Project): Project {
  */
 function withClearedLayout(project: Project): Project {
   return { ...project, placements: [], layout: undefined };
+}
+
+export interface InvalidatedLayout {
+  project: Project;
+  /** Hebrew notice naming what was removed, or null when every manual item survived */
+  notice: string | null;
+}
+
+/**
+ * withClearedLayout for an edit that may leave hand-edited placements valid.
+ *
+ * Automatic placements and the layout are always dropped. A manual placement
+ * survives only while the wall it sits on is untouched: both of its drawn
+ * contours still exist with the same line, thickness and pour. A wall that
+ * moved, changed length or thickness, was split, re-poured or deleted loses its
+ * manual items, and the notice says which walls — approved rule: a manual edit
+ * may be dropped with the geometry it was made for, but never silently.
+ */
+export function withLayoutInvalidated(before: Project, after: Project): InvalidatedLayout {
+  const manual = before.placements.filter((p) => p.source === "manual");
+  if (manual.length === 0) return { project: withClearedLayout(after), notice: null };
+
+  const beforeById = new Map(before.walls.map((w) => [w.id, w]));
+  const afterById = new Map(after.walls.map((w) => [w.id, w]));
+  const sameWall = (id: string): boolean => {
+    const a = beforeById.get(id);
+    const b = afterById.get(id);
+    return (
+      !!a &&
+      !!b &&
+      a.pourId === b.pourId &&
+      a.thickness === b.thickness &&
+      a.innerLine[0].x === b.innerLine[0].x &&
+      a.innerLine[0].y === b.innerLine[0].y &&
+      a.innerLine[1].x === b.innerLine[1].x &&
+      a.innerLine[1].y === b.innerLine[1].y
+    );
+  };
+  const contoursOf = (wallId: string): string[] => {
+    const resolved = before.layout?.resolvedWalls.find((w) => w.id === wallId);
+    const partner = beforeById.get(wallId)?.pairedWallId;
+    return [wallId, ...(resolved?.consumedWallIds ?? []), ...(partner ? [partner] : [])];
+  };
+
+  const kept: Placement[] = [];
+  const droppedWallIds = new Set<string>();
+  for (const placement of manual) {
+    if (contoursOf(placement.wallId).every(sameWall)) kept.push(placement);
+    else droppedWallIds.add(placement.wallId);
+  }
+
+  const project = { ...after, placements: kept, layout: undefined };
+  if (droppedWallIds.size === 0) return { project, notice: null };
+  const lengths = [...droppedWallIds].map((id) => {
+    const wall = beforeById.get(id);
+    return wall
+      ? `${Math.round(Math.hypot(wall.innerLine[1].x - wall.innerLine[0].x, wall.innerLine[1].y - wall.innerLine[0].y))} ס"מ`
+      : "קיר שנמחק";
+  });
+  const count = manual.length - kept.length;
+  return {
+    project,
+    notice: `${count} פריטים שנערכו ידנית הוסרו כי הקיר שלהם השתנה (קירות: ${lengths.join(", ")})`,
+  };
+}
+
+/**
+ * The walls that carry hand-edited placements, for the warning shown before a
+ * recompute. Returned as display lengths so the message can name them.
+ */
+export function manualPlacementWalls(project: Project): { wallIds: string[]; count: number; message: string | null } {
+  const manual = project.placements.filter((p) => p.source === "manual");
+  const wallIds = [...new Set(manual.map((p) => p.wallId))];
+  if (wallIds.length === 0) return { wallIds, count: 0, message: null };
+  const lengths = wallIds.map((id) => {
+    const wall = project.walls.find((w) => w.id === id);
+    return wall
+      ? `${Math.round(Math.hypot(wall.innerLine[1].x - wall.innerLine[0].x, wall.innerLine[1].y - wall.innerLine[0].y))} ס"מ`
+      : id;
+  });
+  return {
+    wallIds,
+    count: manual.length,
+    message:
+      `בפרויקט ${manual.length} פריטים שנערכו ידנית, על ${wallIds.length} קירות (${lengths.join(", ")}).\n` +
+      "הם יישארו במקומם, והחישוב ימלא סביבם. פאנלי פינה שנערכו ידנית יחושבו מחדש.\n" +
+      "להמשיך בחישוב?",
+  };
 }
 
 /**
@@ -289,6 +399,10 @@ function withMeasuredThickness(project: Project, layout: ProjectLayout): Project
  * the current engine produced; the banner then asks for one recompute.
  */
 function openProject(raw: Project): { project: Project; notice: string | null } {
+  // Checked on the RAW blob, before migrateProject touches it — this is
+  // exactly the "a project already has a non-default gap" case that
+  // migration itself declines to overwrite (see the function's doc comment).
+  const customTimberGap = hasNonDefaultTimberGapBeforeMigration(raw);
   const migrated = migrateProject(raw);
   const planarized = splitWallsAtJunctions(migrated.walls);
   const normalized = planarized.changed ? { ...migrated, walls: planarized.walls } : migrated;
@@ -307,7 +421,9 @@ function openProject(raw: Project): { project: Project; notice: string | null } 
         ? "הפריסה חושבה בגרסה קודמת של מנוע החישוב ולכן נוקתה — יש ללחוץ חשב"
         : planarized.changed
           ? "חיבורי הקירות עודכנו לצמתי T אמיתיים — יש ללחוץ חשב"
-          : null;
+          : customTimberGap
+            ? 'בפרויקט זה טווח מרווח עץ מותאם אישית (שונה מ-5–9 הישן) — לא עודכן אוטומטית ל-1–5 ס"מ'
+            : null;
 
   return { project, notice };
 }
@@ -386,7 +502,7 @@ export function reduce(state: AppState, action: Action): AppState {
           // Off the OPENED project, not the raw blob: a layout the engine
           // check just dropped must light the banner, and the raw blob still
           // carries the placements that were dropped with it.
-          layoutDirty: opened.project.placements.length === 0 && opened.project.walls.length > 0,
+          layoutDirty: isLayoutMissing(opened.project),
           notice: opened.notice,
         },
       };
@@ -442,17 +558,13 @@ export function reduce(state: AppState, action: Action): AppState {
           Number.isFinite(value) && value > 0 ? Math.floor(value) : 0,
         ])
       );
+      // Stock does not move a wall, so hand-edited placements all survive; the
+      // next compute re-checks them against the new quantities.
+      const invalidated = withLayoutInvalidated(state.project, { ...state.project, inventory });
       return {
         ...state,
-        project: withUpdatedAt(
-          withInventoryEligibleCatalog(
-            withClearedLayout({
-              ...state.project,
-              inventory,
-            })
-          )
-        ),
-        ui: { ...state.ui, layoutDirty: state.project.walls.length > 0, notice: null },
+        project: withUpdatedAt(withInventoryEligibleCatalog(invalidated.project)),
+        ui: { ...state.ui, layoutDirty: state.project.walls.length > 0, notice: invalidated.notice },
       };
     }
 
@@ -488,22 +600,21 @@ export function reduce(state: AppState, action: Action): AppState {
       const walls = state.project.walls.map((w) =>
         w.pourId === action.pourId ? { ...w, pourId: fallbackPourId } : w
       );
+      // Reassigning a pour can break a pairing: two faces of one wall must
+      // belong to the same pour, so the link is re-derived rather than kept.
+      const invalidated = withLayoutInvalidated(
+        state.project,
+        withDerivedPairing({ ...state.project, pours: remaining, walls })
+      );
       return {
         ...state,
-        // Reassigning a pour can break a pairing: two faces of one wall must
-        // belong to the same pour, so the link is re-derived rather than kept.
-        project: withUpdatedAt(
-          withDerivedPairing({
-            ...withClearedLayout(state.project),
-            pours: remaining,
-            walls,
-          })
-        ),
+        project: withUpdatedAt(invalidated.project),
         ui: {
           ...state.ui,
           activePourId:
             state.ui.activePourId === action.pourId ? fallbackPourId : state.ui.activePourId,
           layoutDirty: true,
+          notice: invalidated.notice,
         },
       };
     }
@@ -518,15 +629,20 @@ export function reduce(state: AppState, action: Action): AppState {
         thicknessSet: true,
       };
       const walls = splitWallsAtJunctions([...state.project.walls, wall]).walls;
+      const invalidated = withLayoutInvalidated(
+        state.project,
+        withDerivedPairing({ ...state.project, walls })
+      );
       return {
         ...state,
-        project: withUpdatedAt(
-          withDerivedPairing({
-            ...withClearedLayout(state.project),
-            walls,
-          })
-        ),
-        ui: { ...state.ui, layoutDirty: true, selectedWallId: wall.id, selectedWallIds: [wall.id] },
+        project: withUpdatedAt(invalidated.project),
+        ui: {
+          ...state.ui,
+          layoutDirty: true,
+          selectedWallId: wall.id,
+          selectedWallIds: [wall.id],
+          notice: invalidated.notice,
+        },
       };
     }
     case "update-wall": {
@@ -535,6 +651,9 @@ export function reduce(state: AppState, action: Action): AppState {
       // A thickness edit is the one geometry change that keeps the pairing
       // true: retargetWallThickness moves the far contour to match and
       // re-mitres its corners, so both sides stay the two faces of one wall.
+      // The last computed layout (still `state.project.layout` here, before
+      // this edit's own clearing below) tells it which contour is outer, so
+      // the drawn outer dimensions never move.
       let project = state.project;
       let notice: string | null = null;
 
@@ -543,7 +662,12 @@ export function reduce(state: AppState, action: Action): AppState {
         const definedIds = new Set(
           [action.wallId, edited?.pairedWallId].filter((id): id is string => !!id)
         );
-        const result = retargetWallThickness(project.walls, action.wallId, thickness);
+        const result = retargetWallThickness(
+          project.walls,
+          action.wallId,
+          thickness,
+          state.project.layout?.resolvedWalls
+        );
         if (!result.applied) {
           return {
             ...state,
@@ -568,10 +692,11 @@ export function reduce(state: AppState, action: Action): AppState {
           walls: rest.innerLine ? splitWallsAtJunctions(updatedWalls).walls : updatedWalls,
         };
       }
+      const invalidated = withLayoutInvalidated(state.project, withDerivedPairing(project));
       return {
         ...state,
-        project: withUpdatedAt(withDerivedPairing(withClearedLayout(project))),
-        ui: { ...state.ui, layoutDirty: true, notice },
+        project: withUpdatedAt(invalidated.project),
+        ui: { ...state.ui, layoutDirty: true, notice: invalidated.notice ?? notice },
       };
     }
     case "delete-wall":
@@ -598,15 +723,13 @@ export function reduce(state: AppState, action: Action): AppState {
               }
             : wall
         );
+      const invalidated = withLayoutInvalidated(
+        state.project,
+        withDerivedPairing({ ...state.project, walls: survivingWalls })
+      );
       return {
         ...state,
-        project: withUpdatedAt(
-          withDerivedPairing({
-            ...withClearedLayout(state.project),
-            walls: survivingWalls,
-            placements: [],
-          })
-        ),
+        project: withUpdatedAt(invalidated.project),
         // Deletion cancels the current calculation. The dirty marker only asks
         // the user to press "compute"; ProjectContext never computes by itself.
         ui: {
@@ -614,6 +737,7 @@ export function reduce(state: AppState, action: Action): AppState {
           layoutDirty: survivingWalls.length > 0,
           selectedWallId: null,
           selectedWallIds: [],
+          notice: invalidated.notice,
         },
       };
     }
@@ -637,12 +761,14 @@ export function reduce(state: AppState, action: Action): AppState {
         return { ...w, innerLine: line };
       });
       const planarWalls = splitWallsAtJunctions(walls).walls;
+      const invalidated = withLayoutInvalidated(
+        state.project,
+        withDerivedPairing({ ...state.project, walls: planarWalls })
+      );
       return {
         ...state,
-        project: withUpdatedAt(
-          withDerivedPairing(withClearedLayout({ ...state.project, walls: planarWalls }))
-        ),
-        ui: { ...state.ui, layoutDirty: true },
+        project: withUpdatedAt(invalidated.project),
+        ui: { ...state.ui, layoutDirty: true, notice: invalidated.notice },
       };
     }
 
@@ -651,7 +777,10 @@ export function reduce(state: AppState, action: Action): AppState {
       // `thicknessSet: false` marker. Apply the 20cm default here as well as
       // on load, so the legacy flag can never block calculation.
       const project = withHealedThickness(state.project).project;
+      // Hand-edited placements ride along in `project.placements`; the engine
+      // keeps the ones whose wall still resolves and tiles around them.
       const { placements, layout } = tileProject(project);
+      const dropped = layout.diagnostics.some((d) => d.code === "manual-placement-dropped");
       return {
         ...state,
         project: withUpdatedAt({
@@ -659,7 +788,11 @@ export function reduce(state: AppState, action: Action): AppState {
           placements,
           layout,
         }),
-        ui: { ...state.ui, layoutDirty: false, notice: null },
+        ui: {
+          ...state.ui,
+          layoutDirty: false,
+          notice: dropped ? "חלק מהפריטים שנערכו ידנית לא נשמרו בחישוב — ראו הערות המנוע" : null,
+        },
       };
     }
 
@@ -699,8 +832,8 @@ export function reduce(state: AppState, action: Action): AppState {
         project: withUpdatedAt({
           ...state.project,
           placements: state.project.placements.map((p) => {
-            if (p.id === target.id) return { ...p, ...patch };
-            if (twin && p.id === twin.id) return { ...p, ...twinPatch };
+            if (p.id === target.id) return withJunctionFlag(state.project, { ...p, ...patch });
+            if (twin && p.id === twin.id) return withJunctionFlag(state.project, { ...p, ...twinPatch });
             return p;
           }),
         }),
@@ -728,7 +861,10 @@ export function reduce(state: AppState, action: Action): AppState {
         ...state,
         project: withUpdatedAt({
           ...state.project,
-          placements: [...state.project.placements, { ...action.placement, source: "manual" }],
+          placements: [
+            ...state.project.placements,
+            withJunctionFlag(state.project, { ...action.placement, source: "manual" }),
+          ],
         }),
       };
 

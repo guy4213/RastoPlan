@@ -1,0 +1,445 @@
+<title>עדכון RastoPlan</title>
+<meta name="description" content="סיכום השינויים בתוכנת RastoPlan לקראת ההצגה ב-24 בספטמבר, בעברית פשוטה">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+
+<style>
+  :root{
+    --paper:#f5f2ec;
+    --surface:#ffffff;
+    --surface-2:#efece3;
+    --ink:#211f1a;
+    --ink-soft:#5a5648;
+    --rule:#d9d3c4;
+    --rule-strong:#b7ae98;
+    --blue:#1d4e89;
+    --blue-soft:#e7edf5;
+    --green:#2f6b45;
+    --green-soft:#e6efe8;
+    --amber:#96591a;
+    --amber-soft:#f5ead9;
+    --red:#a13327;
+    --red-soft:#f5e6e2;
+    --shadow:0 1px 0 rgba(33,31,26,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#17161a;
+      --surface:#1f1e23;
+      --surface-2:#26252b;
+      --ink:#ece9e2;
+      --ink-soft:#a8a396;
+      --rule:#3a3944;
+      --rule-strong:#4c4a56;
+      --blue:#7ea6d6;
+      --blue-soft:#212c3a;
+      --green:#7dbb92;
+      --green-soft:#1f2a22;
+      --amber:#dba25e;
+      --amber-soft:#2c2417;
+      --red:#e08c7e;
+      --red-soft:#2f2020;
+      --shadow:0 1px 0 rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#17161a;
+    --surface:#1f1e23;
+    --surface-2:#26252b;
+    --ink:#ece9e2;
+    --ink-soft:#a8a396;
+    --rule:#3a3944;
+    --rule-strong:#4c4a56;
+    --blue:#7ea6d6;
+    --blue-soft:#212c3a;
+    --green:#7dbb92;
+    --green-soft:#1f2a22;
+    --amber:#dba25e;
+    --amber-soft:#2c2417;
+    --red:#e08c7e;
+    --red-soft:#2f2020;
+    --shadow:0 1px 0 rgba(0,0,0,.3);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    direction:rtl;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"IBM Plex Sans Hebrew","Segoe UI",Arial,sans-serif;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .code, .mono{
+    font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+    direction:ltr;
+    unicode-bidi:embed;
+    font-weight:600;
+  }
+
+  .wrap{
+    max-width:760px;
+    margin:0 auto;
+    padding-inline:20px;
+    padding-block:28px 64px;
+  }
+
+  /* ---- title block, styled like a drawing's revision stamp ---- */
+  .titleblock{
+    background:var(--surface);
+    border:1px solid var(--rule-strong);
+    box-shadow:var(--shadow);
+    margin-bottom:36px;
+  }
+  .titleblock-top{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    gap:16px;
+    padding:20px 22px 16px;
+    flex-wrap:wrap;
+  }
+  .titleblock h1{
+    margin:0;
+    font-size:clamp(22px,4.5vw,30px);
+    font-weight:700;
+    letter-spacing:-0.01em;
+    text-wrap:balance;
+  }
+  .titleblock .sub{
+    color:var(--ink-soft);
+    font-size:14px;
+    margin-top:4px;
+  }
+  .titleblock-grid{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    border-top:1px solid var(--rule);
+  }
+  .titleblock-grid div{
+    padding:12px 22px;
+    border-inline-start:1px solid var(--rule);
+  }
+  .titleblock-grid div:first-child{border-inline-start:none}
+  .titleblock-grid .label{
+    font-size:11px;
+    color:var(--ink-soft);
+    letter-spacing:.04em;
+    margin-bottom:3px;
+  }
+  .titleblock-grid .value{
+    font-size:14px;
+    font-weight:600;
+  }
+  @media (max-width:520px){
+    .titleblock-grid{grid-template-columns:1fr 1fr}
+    .titleblock-grid div:nth-child(3){border-inline-start:none;border-top:1px solid var(--rule)}
+  }
+
+  p.lede{
+    font-size:16px;
+    color:var(--ink-soft);
+    margin:0 0 40px;
+    max-width:56ch;
+  }
+
+  /* ---- phase sections ---- */
+  section.phase{
+    margin-bottom:40px;
+  }
+  .phase-head{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    margin-bottom:14px;
+    padding-bottom:10px;
+    border-bottom:2px solid var(--ink);
+  }
+  .phase-num{
+    font-family:"IBM Plex Mono",monospace;
+    font-size:13px;
+    font-weight:600;
+    color:var(--surface);
+    background:var(--blue);
+    border-radius:3px;
+    padding:3px 8px;
+    letter-spacing:.02em;
+  }
+  .phase-head h2{
+    margin:0;
+    font-size:19px;
+    font-weight:700;
+  }
+  .status-pill{
+    margin-inline-start:auto;
+    font-size:12px;
+    font-weight:600;
+    padding:4px 10px;
+    border-radius:99px;
+    white-space:nowrap;
+  }
+  .status-pill.done{background:var(--green-soft);color:var(--green)}
+
+  ul.items{
+    list-style:none;
+    margin:0;
+    padding:0;
+    display:flex;
+    flex-direction:column;
+    gap:1px;
+    background:var(--rule);
+    border:1px solid var(--rule);
+    border-radius:6px;
+    overflow:hidden;
+  }
+  ul.items li{
+    background:var(--surface);
+    padding:13px 14px;
+    display:flex;
+    gap:12px;
+    align-items:flex-start;
+  }
+  ul.items li .mark{
+    flex:0 0 auto;
+    width:20px;
+    height:20px;
+    border-radius:50%;
+    background:var(--green-soft);
+    color:var(--green);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:12px;
+    font-weight:700;
+    margin-top:1px;
+  }
+  ul.items li .txt b{font-weight:600}
+  ul.items li .txt .note{
+    display:block;
+    color:var(--ink-soft);
+    font-size:13.5px;
+    margin-top:3px;
+  }
+
+  .example{
+    margin-top:10px;
+    background:var(--surface-2);
+    border:1px solid var(--rule);
+    border-radius:6px;
+    padding:10px 13px;
+    font-size:13.5px;
+    color:var(--ink-soft);
+  }
+  .example .mono{color:var(--blue)}
+
+  /* ---- open questions callout ---- */
+  .open-box{
+    background:var(--amber-soft);
+    border:1px solid var(--amber);
+    border-radius:8px;
+    padding:20px 22px;
+    margin-top:44px;
+  }
+  .open-box h2{
+    margin:0 0 4px;
+    font-size:18px;
+    color:var(--amber);
+  }
+  .open-box p.intro{
+    margin:0 0 16px;
+    color:var(--ink-soft);
+    font-size:14px;
+  }
+  .open-box ol{
+    margin:0;
+    padding-inline-start:20px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
+  .open-box li{font-size:14.5px}
+  .open-box li b{display:block;margin-bottom:2px}
+
+  /* ---- footer note ---- */
+  .footnote{
+    margin-top:40px;
+    padding-top:18px;
+    border-top:1px solid var(--rule);
+    font-size:13px;
+    color:var(--ink-soft);
+  }
+
+  h2{text-wrap:balance}
+</style>
+
+<div class="wrap">
+
+  <div class="titleblock">
+    <div class="titleblock-top">
+      <div>
+        <h1>RastoPlan — עדכון לקראת ההצגה</h1>
+        <div class="sub">מה השתנה בתוכנה, בשפה פשוטה</div>
+      </div>
+    </div>
+    <div class="titleblock-grid">
+      <div>
+        <div class="label">הצגה ללקוח</div>
+        <div class="value">24 בספטמבר</div>
+      </div>
+      <div>
+        <div class="label">עדכון זה</div>
+        <div class="value">23 בספטמבר 2026</div>
+      </div>
+      <div>
+        <div class="label">סטטוס</div>
+        <div class="value" style="color:var(--green)">3 שלבים הושלמו</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="lede">
+    כל הבקשות שהעברתם מומשו ונבדקו. הן מפוצלות לשלושה שלבים, כדי שאפשר יהיה
+    לבדוק כל אחד בנפרד. הכל עדיין בעריכה על המחשב — שום דבר לא פורסם או נשלח.
+  </p>
+
+  <section class="phase">
+    <div class="phase-head">
+      <span class="phase-num">01</span>
+      <h2>מה שלא משנה כמויות</h2>
+      <span class="status-pill done">הושלם</span>
+    </div>
+    <ul class="items">
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>ייצוא תוכנית להדפסה (PDF)</b>
+          <span class="note">כפתור חדש. בוחרים גודל דף — A3, A1 או A0 — והתוכנית נפתחת מוכנה להדפסה, עם כל הקירות, הפאנלים, המידות ושמות היציקות.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>עריכה ידנית של פאנל נשמרת אחרי חישוב מחדש</b>
+          <span class="note">עד היום, כל לחיצה על "חשב" מחקה עריכות ידניות. עכשיו הן נשארות במקומן, והתוכנה ממלאת רק את השאר סביבן. לפני החישוב מוצגת התראה עם רשימת הקירות שיש עליהם עריכה ידנית.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>טבלת הפאנלים — עמודה לכל יציקה</b>
+          <span class="note">במקום "פנים/חוץ", כל יציקה מקבלת עמודה משלה עם השם שנתתם לה. הטבלה מוצגת ראשונה תמיד, גם בפרויקט שנטען.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>קובץ ה-Excel נקי יותר</b>
+          <span class="note">שורות עם כמות אפס לא מופיעות בכלל בקובץ שיוצא ל-Priority.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>מילוי שדות בלי עכבר</b>
+          <span class="note">בפאנלים הצדדיים אפשר לעבור בין שדות עם Tab, לשמור עם Enter ולבטל עם Escape.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>הזנת מלאי ידנית</b>
+          <span class="note">חלון חדש להקלדת כמות מלאי לכל פריט, כתחליף לייבוא מאקסל — או בנוסף לו.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>הוסרה כותרת מתה מקובץ ה-Excel</b>
+          <span class="note">השורה "חצאי פנאלים :" הייתה כותרת ללא תוכן מתחתיה — היא הועתקה מהתבנית המקורית שלכם, ולא הייתה מיוצגת שם על ידי אף שורת מוצר אמיתית. הוסרה לגמרי.</span>
+        </span>
+      </li>
+    </ul>
+  </section>
+
+  <section class="phase">
+    <div class="phase-head">
+      <span class="phase-num">02</span>
+      <h2>פאנל <span class="code">R90</span> — רק בצומת T</h2>
+      <span class="status-pill done">הושלם</span>
+    </div>
+    <ul class="items">
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>הכלל שאישר ירון מומש</b>
+          <span class="note">התוכנה בוחרת פאנל <span class="code">R90</span> רק בקטע קיר שנוגע בצומת T. בכל מקום אחר — קיר ישר, פינה, צומת צלב — הוא לא נבחר אוטומטית.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>אפשר עדיין להציב אותו ידנית</b>
+          <span class="note">אם מישהו כן שם <span class="code">R90</span> במקום אחר, זה מתקבל — אבל מסומן באדום עם הודעה, כדי שאף אחד לא יחמיץ את זה.</span>
+        </span>
+      </li>
+    </ul>
+    <div class="example">
+      <b style="font-weight:600">מה זה משנה בכמויות:</b> בכל קיר שלא נוגע בצומת T,
+      פאנל <span class="mono">R90</span> יוחלף בפאנל <span class="mono">R85</span> ועוד חתיכת עץ קטנה.
+      זה משפיע גם על מספר הקלמרות.
+    </div>
+  </section>
+
+  <section class="phase">
+    <div class="phase-head">
+      <span class="phase-num">03</span>
+      <h2>מרווח העץ ותיקון העובי</h2>
+      <span class="status-pill done">הושלם</span>
+    </div>
+    <ul class="items">
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>מרווח העץ המותר צומצם</b>
+          <span class="note">מ-5–9 ס"מ ל-<b>1–5 ס"מ</b>, כפי שביקשתם. זה משנה אילו שילובי פאנלים נחשבים תקינים, ולכן גם כמה מהכמויות.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>פרויקטים ישנים מתעדכנים אוטומטית</b>
+          <span class="note">כל פרויקט שנפתח מ-1–5 עכשיו, בלי צורך לגעת בו ידנית.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">✓</span>
+        <span class="txt">
+          <b>באג בעריכת עובי — תוקן</b>
+          <span class="note">עד היום, לפעמים עריכת עובי מהצד הפנימי הזיזה בטעות את הקו החיצוני של הקיר — בדיוק המידה שרשומה בתוכנית ההנדסית. עכשיו הקו החיצוני לא זז לעולם. הקו הפנימי הוא שמתעדכן.</span>
+        </span>
+      </li>
+    </ul>
+  </section>
+
+  <div class="open-box">
+    <h2>נקודה אחת שדורשת תשובה שלכם</h2>
+    <p class="intro">הכל סביבה כבר מוכן — רק חסרה החלטה כדי לסגור אותה.</p>
+    <ol>
+      <li>
+        <b>קובץ הייחוס של נפתלי ניסן</b>
+        בגיליון שלו רשומים 10 פאנלי <span class="mono">90/300</span> ביציקה 1 ו-6 ביציקה 2.
+        אין לנו את שרטוט הבניין המלא, ולכן אי אפשר לבדוק אם כל ה-<span class="mono">R90</span> האלה
+        באמת יושבים בצמתי T. כדאי לבדוק מול ירון לפני ההצגה.
+      </li>
+    </ol>
+  </div>
+
+  <div class="footnote">
+    כל שלושת השלבים עברו בדיקות אוטומטיות מלאות (כ-700 בדיקות), ומעבר ידני
+    על פרויקט לדוגמה עם שתי יציקות — ציור, חישוב, עריכה ידנית, חישוב מחדש,
+    ייצוא PDF וייצוא Excel. שום שינוי עדיין לא נשמר לצמיתות; זה יקרה רק
+    באישורכם.
+  </div>
+
+</div>

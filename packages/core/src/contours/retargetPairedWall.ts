@@ -1,4 +1,4 @@
-import type { Diagnostic, Point, Wall } from "../types.js";
+import type { Diagnostic, Point, ResolvedWall, Wall } from "../types.js";
 import { lineIntersection, perpendicularDistance, unitNormal } from "../geometry/polygon.js";
 import { SNAP_TOLERANCE_CM } from "../geometry/buildGraph.js";
 import { distance } from "../geometry/vector.js";
@@ -92,6 +92,47 @@ export interface RetargetThicknessResult {
 }
 
 /**
+ * Which of a paired wall's two drawn contours is the outer one, per the last
+ * computed layout — the face that does NOT border a room. `null` when it
+ * cannot be determined: no layout yet (nothing computed since these two walls
+ * were drawn/paired), or a genuine partition where both faces border a room
+ * and neither is "outer" at all. The caller falls back to its own default in
+ * either case.
+ *
+ * Reads `resolvedWalls` rather than recomputing geometry: the same full
+ * resolution already runs on every "חשב", and re-running it on every
+ * keystroke or drag frame of a thickness edit — the two places this feeds —
+ * would be the wrong cost to pay for a lookup this cheap. A topology change
+ * that flips which face is outer only happens on a geometry edit, which
+ * already drops the stale layout (see withLayoutInvalidated in the web app),
+ * so a layout that still exists is never stale in the way that would matter
+ * here.
+ */
+export function outerContourWallId(
+  resolvedWalls: readonly ResolvedWall[] | undefined,
+  wallIdA: string,
+  wallIdB: string
+): string | null {
+  if (!resolvedWalls) return null;
+  const resolvedWall = resolvedWalls.find(
+    (rw) =>
+      (rw.sourceWallId === wallIdA || rw.consumedWallIds.includes(wallIdA)) &&
+      (rw.sourceWallId === wallIdB || rw.consumedWallIds.includes(wallIdB))
+  );
+  if (!resolvedWall) return null;
+
+  // A drawn face bordering no room is the exterior. Exactly one such face
+  // means an ordinary exterior wall; zero means a partition (both faces
+  // border a room); two should not occur for a valid two-contour pair, but is
+  // treated the same as "cannot tell" rather than guessed at.
+  const exteriorFaces = resolvedWall.faces.filter(
+    (face) => face.sourceWallId !== undefined && !face.isInterior
+  );
+  if (exteriorFaces.length !== 1) return null;
+  return exteriorFaces[0]!.sourceWallId ?? null;
+}
+
+/**
  * Changes one wall's thickness on a plan traced as two contours, keeping the
  * far contour closed.
  *
@@ -104,15 +145,22 @@ export interface RetargetThicknessResult {
  * also why moving all the segments together does not help: translation alone
  * can never close a corner, because the two sides move in different directions.
  *
- * Only the partner and its immediate neighbours move. The wall the user is
- * editing does not, and neither does any neighbour's own thickness: a mitred
- * neighbour slides along its own axis, which leaves its distance from its own
- * partner untouched.
+ * Which of the pair stays put: the OUTER contour, when `resolvedWalls` says
+ * which one that is (customer decision, 13/9/2026 — the drawn outer dimensions
+ * are what's on the engineering plan and must never move when tuning
+ * thickness). Otherwise — no layout yet, a partition with no outer face, or a
+ * neighbour that cannot be re-mitred to the far side of an already-moved
+ * corner from this same edit — the wall the user is actively editing stays
+ * put instead, exactly as before this rule existed. Either way, only the
+ * wall that actually moves and its immediate neighbours change; the anchor's
+ * own thickness field updates regardless of which one physically moved.
  */
 export function retargetWallThickness(
   walls: Wall[],
   anchorId: string,
-  newThicknessCm: number
+  newThicknessCm: number,
+  /** the last computed layout's resolved walls, so the outer contour can be identified; omit to always keep the edited wall stationary */
+  resolvedWalls?: readonly ResolvedWall[]
 ): RetargetThicknessResult {
   const unchanged = (diagnostics: Diagnostic[] = []): RetargetThicknessResult => ({
     walls,
@@ -147,17 +195,44 @@ export function retargetWallThickness(
     ]);
   }
 
-  const moved = retargetPairedWall(anchor, partner, newThicknessCm);
-  if (moved.diagnostic) return unchanged([moved.diagnostic]);
+  const applyMove = (stationary: Wall, moving: Wall): RetargetThicknessResult | null => {
+    const moved = retargetPairedWall(stationary, moving, newThicknessCm);
+    if (moved.diagnostic) return unchanged([moved.diagnostic]);
 
-  const diagnostics: Diagnostic[] = [];
-  const mitred = walls.map((wall) => {
-    if (wall.id === anchor.id) return { ...wall, thickness: newThicknessCm };
-    if (wall.id === partner.id) return moved.wall;
-    return mitreToOffsetLine(wall, partner, moved.wall, diagnostics);
-  });
+    const diagnostics: Diagnostic[] = [];
+    const mitred = walls.map((wall) => {
+      if (wall.id === stationary.id) return { ...wall, thickness: newThicknessCm };
+      if (wall.id === moving.id) return moved.wall;
+      return mitreToOffsetLine(wall, moving, moved.wall, diagnostics);
+    });
 
-  return { walls: mitred, diagnostics, applied: true };
+    return { walls: mitred, diagnostics, applied: true };
+  };
+
+  const outerId = outerContourWallId(resolvedWalls, anchor.id, partner.id);
+  if (outerId === partner.id) {
+    // The outer contour is known and it is not the wall being edited: move
+    // the edited (inner) wall instead, keeping the outer one — and everything
+    // that only touches it — exactly where it is.
+    //
+    // A drawn wall that a T junction split only PART of into a paired segment
+    // (its sibling segment stayed single-contour, un-paired with the outer
+    // line at all — see resolveWalls) can make this move tear that T corner
+    // open: the edited segment slides away from its sibling, which nothing
+    // here re-mitres because the sibling was never told to follow. That is a
+    // real defect, not a cosmetic warning, so it is not accepted — the whole
+    // move falls back to the plain default below instead, exactly as if the
+    // outer contour could not be identified at all.
+    const outerAnchored = applyMove(partner, anchor);
+    if (outerAnchored && !outerAnchored.diagnostics.some((d) => d.code === "corner-not-remitrable")) {
+      return outerAnchored;
+    }
+  }
+
+  // Default: the wall the user is actively editing stays put. Reached when
+  // the outer contour is unknown (no layout yet, or a partition with no
+  // outer face at all) and as the safe fallback above.
+  return applyMove(anchor, partner) ?? unchanged();
 }
 
 /**

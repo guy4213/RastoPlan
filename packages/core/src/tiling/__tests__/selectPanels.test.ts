@@ -45,16 +45,16 @@ describe("selectPanels", () => {
     expect(widthsOf(result.panels)).toEqual([75, 75, 75, 75]);
   });
 
-  it("requires a timber gap: 82cm -> one R75, 7cm gap", () => {
+  it("requires a timber gap: 82cm -> one R80, 2cm gap (1–5cm range picks the tighter-fitting panel)", () => {
     const result = selectPanels(82, DEFAULT_PANEL_CATALOG, DEFAULT_ACCESSORY_RULES);
 
     expect(result.flags).toHaveLength(0);
-    expect(result.gap).toBe(7);
-    expect(widthsOf(result.panels)).toEqual([75]);
+    expect(result.gap).toBe(2);
+    expect(widthsOf(result.panels)).toEqual([80]);
   });
 
-  it("no valid combination: 42cm falls between every reachable gap, flags gap-out-of-range", () => {
-    const result = selectPanels(42, sparseCatalog(), DEFAULT_ACCESSORY_RULES);
+  it("no valid combination: 33cm falls between every reachable gap, flags gap-out-of-range", () => {
+    const result = selectPanels(33, sparseCatalog(), DEFAULT_ACCESSORY_RULES);
 
     expect(result.flags).toEqual(["gap-out-of-range"]);
     expect(result.panels).toHaveLength(0);
@@ -155,5 +155,67 @@ describe("selectPanels", () => {
     expect(result.flags).toEqual([]);
     expect(result.panels.reduce((sum, panel) => sum + panel.width, 0)).toBe(1275);
     expect(Date.now() - start).toBeLessThan(500);
+  });
+});
+
+/**
+ * The 1–5cm timber-gap range (customer decision, 13/9/2026, replacing 5–9cm)
+ * pinned against a single-width catalog, so the only variable in play is the
+ * gap itself rather than which panel combination gets picked.
+ */
+describe("selectPanels — timber gap 1–5cm (13/9/2026 customer decision)", () => {
+  const singleWidthCatalog: PanelCatalog = {
+    panels: [
+      {
+        type: "R75",
+        width: 75,
+        height: 300,
+        isLeading: true,
+        inStock: true,
+        kind: "straight",
+        bomLabel: "פנאל 75/300",
+      },
+    ],
+  };
+
+  it("DEFAULT_ACCESSORY_RULES carries the new 1–5cm bounds", () => {
+    expect(DEFAULT_ACCESSORY_RULES.timberGapMin).toBe(1);
+    expect(DEFAULT_ACCESSORY_RULES.timberGapMax).toBe(5);
+  });
+
+  it("a 1cm gap is legal — previously illegal under the old 5–9cm floor", () => {
+    const result = selectPanels(76, singleWidthCatalog, DEFAULT_ACCESSORY_RULES);
+
+    expect(result.flags).toEqual([]);
+    expect(result.gap).toBe(1);
+    expect(widthsOf(result.panels)).toEqual([75]);
+  });
+
+  it.each([1, 2, 3, 4, 5])("a %icm gap is legal", (gap) => {
+    const result = selectPanels(75 + gap, singleWidthCatalog, DEFAULT_ACCESSORY_RULES);
+
+    expect(result.flags).toEqual([]);
+    expect(result.gap).toBe(gap);
+  });
+
+  it.each([6, 7, 8, 9])(
+    "a %icm gap is no longer legal — flags gap-out-of-range instead of the old 5–9cm fit",
+    (gap) => {
+      const result = selectPanels(75 + gap, singleWidthCatalog, DEFAULT_ACCESSORY_RULES);
+
+      expect(result.flags).toEqual(["gap-out-of-range"]);
+      expect(result.panels).toHaveLength(0);
+    }
+  );
+
+  it("keeps the customer verification case exactly as before: 340cm -> R75,R75,R40,R75,R75, no gap", () => {
+    // Every combination in this case is an exact fit — gap 0 — so the range
+    // narrowing must not move it at all. This is the canonical case the whole
+    // engine is checked against; it must stay green through every stage.
+    const result = selectPanels(340, DEFAULT_PANEL_CATALOG, DEFAULT_ACCESSORY_RULES);
+
+    expect(result.flags).toHaveLength(0);
+    expect(result.gap).toBe(0);
+    expect(widthsOf(result.panels)).toEqual([75, 75, 75, 75, 40]);
   });
 });

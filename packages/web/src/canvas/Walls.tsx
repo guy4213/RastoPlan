@@ -56,7 +56,12 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
   // contour segments re-mitred onto it, so the far contour stays closed while
   // the drag is in flight instead of tearing open at the corners.
   const shownWalls = thicknessDrag
-    ? retargetWallThickness(walls, thicknessDrag.wallId, thicknessDrag.thicknessCm).walls
+    ? retargetWallThickness(
+        walls,
+        thicknessDrag.wallId,
+        thicknessDrag.thicknessCm,
+        layout?.resolvedWalls
+      ).walls
     : walls;
   const selectedSet = new Set(selectedWallIds);
   const units = state.ui.units;

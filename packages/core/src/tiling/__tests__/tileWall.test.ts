@@ -16,7 +16,7 @@ const target = (clearLength: number, startOffset = 0): TileWallTarget => ({
   startOffset,
 });
 
-/** Sparse stock list — the full catalog can fill 42cm, so it can't exercise the failure path. */
+/** Sparse stock list — the full catalog can fill 33cm, so it can't exercise the failure path. */
 function sparseCatalog(): PanelCatalog {
   return {
     panels: [75, 60, 55, 50, 40].map((width) => ({
@@ -75,11 +75,11 @@ describe("tileWall", () => {
   });
 
   it("no valid combination: returns one flagged placement spanning the whole edge instead of crashing", () => {
-    const placements = tileWall(edge(42), target(42), sparseCatalog(), DEFAULT_ACCESSORY_RULES);
+    const placements = tileWall(edge(33), target(33), sparseCatalog(), DEFAULT_ACCESSORY_RULES);
 
     expect(placements).toHaveLength(1);
     expect(placements[0]?.flags).toEqual(["gap-out-of-range"]);
-    expect(placements[0]?.width).toBe(42);
+    expect(placements[0]?.width).toBe(33);
   });
 
   it("renders stocked panels normally and flags only each missing unit", () => {
