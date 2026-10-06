@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { PanelCatalog } from "@rastoplan/core";
 import { inventoryLabels, inventoryToFormValues, formValuesToInventory } from "./inventoryFormValues.js";
+import { controlStyles } from "../ui/controlStyles.js";
 
 interface Props {
   open: boolean;
@@ -192,15 +193,13 @@ const labelTextStyle: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+// Exact drop-in for the shared `smallInput` size — kept local only for the
+// field-specific fixed width, which controlStyles.smallInput deliberately
+// leaves to the caller.
 const fieldInputStyle: React.CSSProperties = {
+  ...controlStyles.smallInput,
   width: 70,
   flexShrink: 0,
-  padding: "4px 6px",
-  fontSize: 12,
-  textAlign: "center",
-  border: "1px solid #cbd5e1",
-  borderRadius: 4,
-  fontFamily: "inherit",
 };
 
 const footerStyle: React.CSSProperties = {

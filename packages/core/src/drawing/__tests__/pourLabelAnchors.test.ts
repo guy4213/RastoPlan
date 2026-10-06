@@ -2,13 +2,20 @@ import { describe, expect, it } from "vitest";
 import { pourLabelAnchors } from "../pourLabelAnchors.js";
 import type { Pour, Wall } from "../../types.js";
 
-function wall(id: string, pourId: string, a: [number, number], b: [number, number]): Wall {
+function wall(
+  id: string,
+  pourId: string,
+  a: [number, number],
+  b: [number, number],
+  pairedWallId?: string,
+): Wall {
   return {
     id,
     pourId,
     innerLine: [{ x: a[0], y: a[1] }, { x: b[0], y: b[1] }],
     thickness: 20,
     thicknessSet: true,
+    ...(pairedWallId ? { pairedWallId } : {}),
   };
 }
 
@@ -105,5 +112,56 @@ describe("pourLabelAnchors", () => {
     const anchors = pourLabelAnchors(walls, [pour("p1", "יציקה 1", 0)]);
     expect(anchors).toHaveLength(1);
     expect(anchors[0]!.wallIds).toEqual(["w1", "w2"]);
+  });
+
+  it("merges a two-contour physical wall (inner + outer trace) into one group via pairedWallId", () => {
+    // The inner and outer contours of the same physical wall are offset by
+    // the 20cm thickness, so they never share a snapped node — only the
+    // symmetric pairedWallId link (written by the engine on both walls of a
+    // pair) tells us they are one physical unit.
+    const walls: Wall[] = [
+      wall("inner", "p1", [0, 0], [100, 0], "outer"),
+      wall("outer", "p1", [0, 20], [100, 20], "inner"),
+    ];
+    const anchors = pourLabelAnchors(walls, [pour("p1", "יציקה 1", 0)]);
+
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0]!.wallIds).toEqual(["inner", "outer"]);
+    // Length-weighted centroid of the two midpoints (0,0)-(100,0) and
+    // (0,20)-(100,20): both walls have equal length, so it lands halfway
+    // between them — the shared centre of the physical wall.
+    expect(anchors[0]!.point.x).toBeCloseTo(50, 5);
+    expect(anchors[0]!.point.y).toBeCloseTo(10, 5);
+  });
+
+  it("does not merge a paired wall across two different pours", () => {
+    // A shared pairedWallId link must not merge label groups across pours,
+    // mirroring the existing node-based rule for a shared corner.
+    const walls: Wall[] = [
+      wall("inner", "p1", [0, 0], [100, 0], "outer"),
+      wall("outer", "p2", [0, 20], [100, 20], "inner"),
+    ];
+    const pours = [pour("p1", "יציקה 1", 0), pour("p2", "יציקה 2", 1)];
+    const anchors = pourLabelAnchors(walls, pours);
+
+    expect(anchors).toHaveLength(2);
+    const p1 = anchors.find((a) => a.pourId === "p1")!;
+    const p2 = anchors.find((a) => a.pourId === "p2")!;
+    expect(p1.wallIds).toEqual(["inner"]);
+    expect(p2.wallIds).toEqual(["outer"]);
+  });
+
+  it("treats a stale pairedWallId (partner no longer in walls) as unpaired, without crashing", () => {
+    // Simulates a wall whose paired partner was deleted elsewhere but whose
+    // own pairedWallId has not yet been cleared.
+    const walls: Wall[] = [
+      wall("w1", "p1", [0, 0], [100, 0], "deleted-partner"),
+      wall("w2", "p1", [1000, 1000], [1100, 1000]),
+    ];
+    const anchors = pourLabelAnchors(walls, [pour("p1", "יציקה 1", 0)]);
+
+    expect(anchors).toHaveLength(2);
+    expect(anchors[0]!.wallIds).toEqual(["w1"]);
+    expect(anchors[1]!.wallIds).toEqual(["w2"]);
   });
 });

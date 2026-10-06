@@ -11,7 +11,17 @@ import { CornerClamps } from "./CornerClamps.js";
 import { StraightClamps } from "./StraightClamps.js";
 import { WeldOverlay } from "./WeldOverlay.js";
 import { PourLabels } from "./PourLabels.js";
-import { ENDPOINT_SNAP_PIXELS, applyAxisLock, findEndpointSnapTarget, formatLength, snapEndpoint } from "./geometry.js";
+import { isShiftHeld, useShiftHeld } from "./shiftHeld.js";
+import {
+  ENDPOINT_SNAP_PIXELS,
+  PARALLEL_LENGTH_SNAP_PIXELS,
+  applyAxisLock,
+  effectiveOrthoLock,
+  findEndpointSnapTarget,
+  findParallelLengthSnap,
+  formatLength,
+  snapEndpoint,
+} from "./geometry.js";
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 5;
@@ -108,8 +118,28 @@ export function Canvas() {
   // Vertex the next endpoint would snap to — rendered as a highlighted
   // circle so the user sees the lock happening before releasing.
   const [snapHint, setSnapHint] = useState<Point | null>(null);
+  // Wall whose length the preview has adopted, so the user can see which edge
+  // it matched rather than wondering why the number stopped moving.
+  const [lengthMatchWallId, setLengthMatchWallId] = useState<string | null>(null);
 
   const snapCm = ENDPOINT_SNAP_PIXELS / view.scale;
+  const lengthSnapCm = PARALLEL_LENGTH_SNAP_PIXELS / view.scale;
+
+  // Shift is a held modifier over the stored baseline. The pointer handlers
+  // read it synchronously via isShiftHeld() rather than as a dependency:
+  // re-creating them on each press would rebuild the memoised layers
+  // mid-gesture, which is exactly what the memos above exist to prevent. The
+  // previous code closed over `orthoLock` without listing it as a dependency,
+  // so a mid-drag press snapped the preview once (via the effect below) and the
+  // next mousemove immediately un-snapped it — and the commit used the stale
+  // value, saving an off-axis wall under a square preview.
+  const shiftHeld = useShiftHeld();
+  const orthoNow = effectiveOrthoLock(orthoLock, shiftHeld);
+  const orthoBaselineRef = useRef(orthoLock);
+  orthoBaselineRef.current = orthoLock;
+  const lengthMatchWall = lengthMatchWallId
+    ? (walls.find((w) => w.id === lengthMatchWallId) ?? null)
+    : null;
 
   // Middle-button pan. Deliberately NOT a tool: switching the active tool to
   // pan and back would cancel a half-drawn wall and lose the modifier state,
@@ -352,9 +382,35 @@ export function Canvas() {
     setDrawEnd(null);
     setDrawMode("idle");
     setSnapHint(null);
+    setLengthMatchWallId(null);
     mouseDownPixelRef.current = null;
     rawDrawEndRef.current = null;
   }, []);
+
+  /**
+   * The whole endpoint pipeline in one place, so the live preview, the
+   * click-click commit and the drag commit cannot disagree about where the
+   * wall ends. Order matters: the axis lock fixes the direction, and the
+   * length match then only adjusts the magnitude along it.
+   */
+  const resolveDrawEnd = useCallback(
+    (start: Point, rawWorld: Point) => {
+      const endpointTarget = findEndpointSnapTarget(rawWorld, walls, snapCm);
+      const snapped = endpointTarget ?? rawWorld;
+      const locked = applyAxisLock(start, snapped, effectiveOrthoLock(orthoBaselineRef.current, isShiftHeld()));
+
+      // Landing on an existing corner is the stronger intent: don't drag the
+      // endpoint back off it just to match some other wall's length.
+      const heldByEndpoint =
+        endpointTarget !== null && locked.x === snapped.x && locked.y === snapped.y;
+      const match = heldByEndpoint
+        ? null
+        : findParallelLengthSnap(start, locked, walls, lengthSnapCm);
+
+      return { end: match?.end ?? locked, snapped, matchWallId: match?.wallId ?? null };
+    },
+    [walls, snapCm, lengthSnapCm]
+  );
 
   const handleMouseDown = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -383,8 +439,7 @@ export function Canvas() {
 
       // Second click of a click-click draw commits the wall.
       if (drawMode === "awaiting-second" && drawStart) {
-        const end = applyAxisLock(drawStart, snapEndpoint(world, walls, snapCm), orthoLock);
-        commitWall(drawStart, end);
+        commitWall(drawStart, resolveDrawEnd(drawStart, world).end);
         cancelDraw();
         return;
       }
@@ -395,9 +450,10 @@ export function Canvas() {
       rawDrawEndRef.current = snapped;
       setDrawMode("dragging");
       setSnapHint(findEndpointSnapTarget(world, walls, snapCm));
+      setLengthMatchWallId(null);
       mouseDownPixelRef.current = { x: pointer.x, y: pointer.y };
     },
-    [tool, walls, stageToWorld, drawMode, drawStart, commitWall, cancelDraw, snapCm]
+    [tool, walls, stageToWorld, drawMode, drawStart, commitWall, cancelDraw, snapCm, resolveDrawEnd]
   );
 
   const handleMouseMove = useCallback(
@@ -415,12 +471,13 @@ export function Canvas() {
 
       if (tool !== "draw-wall" || !drawStart) return;
       const world = stageToWorld(pointer.x, pointer.y);
-      const snapped = snapEndpoint(world, walls, snapCm);
-      rawDrawEndRef.current = snapped;
-      setDrawEnd(applyAxisLock(drawStart, snapped, orthoLock));
+      const resolved = resolveDrawEnd(drawStart, world);
+      rawDrawEndRef.current = world;
+      setDrawEnd(resolved.end);
       setSnapHint(findEndpointSnapTarget(world, walls, snapCm));
+      setLengthMatchWallId(resolved.matchWallId);
     },
-    [tool, drawStart, walls, stageToWorld, marquee, snapCm]
+    [tool, drawStart, walls, stageToWorld, marquee, snapCm, resolveDrawEnd]
   );
 
   const handleMouseUp = useCallback(
@@ -458,10 +515,25 @@ export function Canvas() {
         return;
       }
 
-      commitWall(drawStart, applyAxisLock(drawStart, drawEnd, orthoLock));
+      // Re-resolve from the raw pointer rather than trusting `drawEnd`: the
+      // committed wall must be the one on screen even if the modifier changed
+      // between the last mousemove and the release.
+      const raw = rawDrawEndRef.current;
+      commitWall(drawStart, raw ? resolveDrawEnd(drawStart, raw).end : drawEnd);
       cancelDraw();
     },
-    [tool, drawMode, drawStart, drawEnd, commitWall, cancelDraw, marquee, walls, dispatch]
+    [
+      tool,
+      drawMode,
+      drawStart,
+      drawEnd,
+      commitWall,
+      cancelDraw,
+      marquee,
+      walls,
+      dispatch,
+      resolveDrawEnd,
+    ]
   );
 
   const handleStageClick = useCallback(
@@ -495,28 +567,6 @@ export function Canvas() {
     [tool, drawStart, drawMode, cancelDraw, marquee]
   );
 
-  // Shift flips the ortho lock. One keydown per press: the repeat events from
-  // holding the key would otherwise flap the mode on and off, and there is no
-  // keyup handler at all — releasing Shift must not undo the user's choice.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Shift" || e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      dispatch({ type: "set-ortho-lock", value: !orthoLock });
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dispatch, orthoLock]);
-
   // Re-apply the lock to the wall being drawn the moment the mode changes,
   // rather than at the next mousemove — waiting for the user to jiggle the
   // cursor before the line snaps feels broken on the CAD tools they know.
@@ -524,8 +574,10 @@ export function Canvas() {
     if (tool !== "draw-wall" || !drawStart) return;
     const raw = rawDrawEndRef.current;
     if (!raw) return;
-    setDrawEnd(applyAxisLock(drawStart, raw, orthoLock));
-  }, [orthoLock, tool, drawStart]);
+    const resolved = resolveDrawEnd(drawStart, raw);
+    setDrawEnd(resolved.end);
+    setLengthMatchWallId(resolved.matchWallId);
+  }, [orthoNow, tool, drawStart, resolveDrawEnd]);
 
   // Keyboard: tool switch (V/D/W), Delete selection, Escape cancels.
   // Skip when the user is typing into a form field so the shortcuts
@@ -540,6 +592,22 @@ export function Canvas() {
           target.tagName === "SELECT" ||
           target.isContentEditable);
       if (isEditable) return;
+
+      // Undo/redo. Guarded by the same editable check above, so inside a text
+      // field the browser's own input undo keeps working untouched.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === "z") {
+          e.preventDefault();
+          dispatch({ type: e.shiftKey ? "redo" : "undo" });
+          return;
+        }
+        if (k === "y") {
+          e.preventDefault();
+          dispatch({ type: "redo" });
+          return;
+        }
+      }
 
       if (e.key === "Escape") {
         if (contextMenu) setContextMenu(null);
@@ -563,6 +631,9 @@ export function Canvas() {
         }
       }
       if (e.key !== "Delete" && e.key !== "Backspace") return;
+      // Modifier-guarded: Ctrl+Backspace is a text-editing gesture, not a
+      // request to delete the selected wall.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (selectedWallIds.length > 1) {
         dispatch({ type: "delete-walls", wallIds: selectedWallIds });
       } else if (selectedWallId) {
@@ -748,6 +819,22 @@ export function Canvas() {
                 fill="#0f172a"
               />
             </>
+          )}
+          {/* The edge whose length the preview just adopted. Without this the
+              number simply stops moving and looks like a stuck cursor. */}
+          {lengthMatchWall && (
+            <Line
+              points={[
+                lengthMatchWall.innerLine[0].x,
+                lengthMatchWall.innerLine[0].y,
+                lengthMatchWall.innerLine[1].x,
+                lengthMatchWall.innerLine[1].y,
+              ]}
+              stroke="#0891b2"
+              strokeWidth={3 / view.scale}
+              dash={[10 / view.scale, 6 / view.scale]}
+              listening={false}
+            />
           )}
           {snapHint && (
             <Circle

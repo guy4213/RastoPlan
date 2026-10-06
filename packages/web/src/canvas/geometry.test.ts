@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Wall } from "@rastoplan/core";
 import {
   applyAxisLock,
+  effectiveOrthoLock,
   findEndpointSnapTarget,
+  findParallelLengthSnap,
   labelSideByWallId,
   panelOverlapRects,
   thicknessFromPointer,
@@ -344,5 +346,103 @@ describe("panelOverlapRects", () => {
     ]);
 
     expect(rects).toEqual([]);
+  });
+});
+
+describe("effectiveOrthoLock", () => {
+  // The user asked for both "Shift makes it straight" and "straight by
+  // default, free only while Shift is down". Inverting the baseline satisfies
+  // both: whatever the mode is, Shift always changes what the line is doing.
+  it("inverts the baseline while Shift is held", () => {
+    expect(effectiveOrthoLock(true, false)).toBe(true);
+    expect(effectiveOrthoLock(true, true)).toBe(false);
+    expect(effectiveOrthoLock(false, false)).toBe(false);
+    expect(effectiveOrthoLock(false, true)).toBe(true);
+  });
+});
+
+describe("findParallelLengthSnap", () => {
+  const horizontal = (id: string, length: number, y = 0): Wall => ({
+    id,
+    pourId: "pour-1",
+    innerLine: [
+      { x: 0, y },
+      { x: length, y },
+    ],
+    thickness: 20,
+  });
+
+  it("adopts a parallel wall's exact length when the drag is close enough", () => {
+    const snap = findParallelLengthSnap(
+      { x: 0, y: 300 },
+      { x: 543, y: 300 },
+      [horizontal("top", 546)],
+      15
+    );
+
+    expect(snap?.lengthCm).toBe(546);
+    expect(snap?.wallId).toBe("top");
+    expect(snap?.end).toEqual({ x: 546, y: 300 });
+  });
+
+  it("leaves the user's own length alone once they drag past the tolerance", () => {
+    expect(
+      findParallelLengthSnap({ x: 0, y: 300 }, { x: 500, y: 300 }, [horizontal("top", 546)], 15)
+    ).toBeNull();
+  });
+
+  it("ignores a wall of the right length that is not parallel", () => {
+    const vertical: Wall = {
+      id: "side",
+      pourId: "pour-1",
+      innerLine: [
+        { x: 0, y: 0 },
+        { x: 0, y: 546 },
+      ],
+      thickness: 20,
+    };
+
+    expect(
+      findParallelLengthSnap({ x: 0, y: 300 }, { x: 543, y: 300 }, [vertical], 15)
+    ).toBeNull();
+  });
+
+  it("matches an edge drawn back the other way", () => {
+    // Antiparallel is still parallel: a rectangle's opposite sides are
+    // normally traced in opposite directions.
+    const snap = findParallelLengthSnap(
+      { x: 546, y: 300 },
+      { x: 3, y: 300 },
+      [horizontal("top", 546)],
+      15
+    );
+
+    expect(snap?.end).toEqual({ x: 0, y: 300 });
+  });
+
+  it("prefers the closest length and breaks ties by input order", () => {
+    // 543 is 3 off "a" and 1 off "b".
+    const walls = [horizontal("a", 546), horizontal("b", 544, 50)];
+    expect(findParallelLengthSnap({ x: 0, y: 300 }, { x: 543, y: 300 }, walls, 15)?.wallId).toBe(
+      "b"
+    );
+
+    const tied = [horizontal("first", 544), horizontal("second", 546, 50)];
+    expect(findParallelLengthSnap({ x: 0, y: 300 }, { x: 545, y: 300 }, tied, 15)?.wallId).toBe(
+      "first"
+    );
+  });
+
+  it("does not snap a dragged endpoint back to its own wall's old length", () => {
+    expect(
+      findParallelLengthSnap({ x: 0, y: 0 }, { x: 543, y: 0 }, [horizontal("top", 546)], 15, "top")
+    ).toBeNull();
+  });
+
+  it("returns null for a zero-length drag and ignores zero-length walls", () => {
+    expect(findParallelLengthSnap(start, start, [horizontal("top", 546)], 15)).toBeNull();
+    expect(
+      findParallelLengthSnap({ x: 0, y: 0 }, { x: 5, y: 0 }, [horizontal("degenerate", 0)], 15)
+    ).toBeNull();
   });
 });

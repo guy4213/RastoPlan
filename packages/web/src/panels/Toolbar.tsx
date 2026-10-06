@@ -6,6 +6,7 @@ import { ProjectsModal } from "./ProjectsModal.js";
 import { AccountMenu } from "./AccountMenu.js";
 import { PrintPlanDialog } from "../export/print/PrintPlanDialog.js";
 import { printPlan } from "../export/print/printPlan.js";
+import { controlStyles } from "../ui/controlStyles.js";
 
 interface FreeEndpoint {
   wallId: string;
@@ -124,10 +125,11 @@ export function Toolbar() {
           background: "#f8fafc",
           color: "#0f172a",
           minWidth: 200,
+          flexShrink: 0,
         }}
       />
 
-      <div style={{ display: "flex", gap: 4, marginInlineStart: 8 }}>
+      <div style={{ display: "flex", gap: 4, marginInlineStart: 8, flexShrink: 0 }}>
         <ToolButton active={tool === "select"} onClick={() => dispatch({ type: "set-tool", tool: "select" })}>
           בחירה <Hotkey>V</Hotkey>
         </ToolButton>
@@ -158,30 +160,34 @@ export function Toolbar() {
           cursor: "pointer",
           fontFamily: "inherit",
           fontSize: 12,
+          whiteSpace: "nowrap",
+          flexShrink: 0,
         }}
       >
         {orthoLock ? "ציור ישר" : "ציור חופשי"}
       </button>
       {tool === "draw-wall" && (
-        <span style={{ fontSize: 11, color: "#64748b" }}>
-          גרירה או קליק-קליק · Shift = מחליף ישר/חופשי · Escape / קליק ימני = ביטול
+        <span style={hintStyle} title="גרירה או קליק-קליק · Shift = חופשי זמנית · Escape / קליק ימני = ביטול">
+          גרירה או קליק-קליק · Shift = חופשי זמנית · Escape / קליק ימני = ביטול
         </span>
       )}
       {tool === "select" && (
-        <span style={{ fontSize: 11, color: "#64748b" }}>
+        <span style={hintStyle} title="קליק = בחירה · Shift+גרירה = חלון בחירה · גרירה = הזזה · Delete = מחיקה">
           קליק = בחירה · Shift+גרירה = חלון בחירה · גרירה = הזזה · Delete = מחיקה
         </span>
       )}
       {tool === "weld" && (
-        <span style={{ fontSize: 11, color: "#64748b" }}>
+        <span style={hintStyle} title="קליק על שני קצוות → מיזוג לפינה משותפת">
           קליק על שני קצוות → מיזוג לפינה משותפת
         </span>
       )}
       {notice && (
-        <span style={{ fontSize: 12, color: "#b45309", marginInlineStart: 8 }}>{notice}</span>
+        <span style={{ ...noticeStyle, color: "#b45309", marginInlineStart: 8 }} title={notice}>
+          {notice}
+        </span>
       )}
 
-      <div style={{ marginInlineStart: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ marginInlineStart: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         <SaveIndicator status={saveStatus} />
         <div
           role="group"
@@ -190,6 +196,7 @@ export function Toolbar() {
             border: "1px solid #cbd5e1",
             borderRadius: 4,
             overflow: "hidden",
+            flexShrink: 0,
           }}
         >
           <UnitButton active={units === "cm"} onClick={() => dispatch({ type: "set-units", units: "cm" })}>
@@ -200,10 +207,14 @@ export function Toolbar() {
           </UnitButton>
         </div>
         {state.ui.notice && (
-          <span style={{ fontSize: 12, color: "#b91c1c", maxWidth: 380 }}>{state.ui.notice}</span>
+          <span style={{ ...noticeStyle, color: "#b91c1c", maxWidth: 380 }} title={state.ui.notice}>
+            {state.ui.notice}
+          </span>
         )}
         {layoutDirty && state.project.walls.length > 0 && (
-          <span style={{ fontSize: 12, color: "#b45309" }}>הפריסה אינה מעודכנת</span>
+          <span style={{ fontSize: 12, color: "#b45309", whiteSpace: "nowrap", flexShrink: 0 }}>
+            הפריסה אינה מעודכנת
+          </span>
         )}
         <button
           type="button"
@@ -216,14 +227,11 @@ export function Toolbar() {
             dispatch({ type: "compute" });
           }}
           style={{
-            padding: "8px 16px",
+            ...controlStyles.button,
             background: state.project.walls.length === 0 ? "#e2e8f0" : "#0f172a",
             color: state.project.walls.length === 0 ? "#94a3b8" : "#fff",
-            border: "none",
-            borderRadius: 4,
             fontWeight: 600,
             cursor: state.project.walls.length === 0 ? "not-allowed" : "pointer",
-            fontFamily: "inherit",
           }}
         >
           חשב
@@ -234,14 +242,12 @@ export function Toolbar() {
           onClick={() => setPrintDialogOpen(true)}
           title={canExportPdf ? "ייצוא תוכנית להדפסה" : "יש להריץ חשב לפני ייצוא PDF"}
           style={{
-            padding: "8px 16px",
+            ...controlStyles.secondaryButton,
             background: canExportPdf ? "#fff" : "#f8fafc",
             color: canExportPdf ? "#0f172a" : "#94a3b8",
             border: `1px solid ${canExportPdf ? "#cbd5e1" : "#e2e8f0"}`,
-            borderRadius: 4,
             fontWeight: 600,
             cursor: canExportPdf ? "pointer" : "not-allowed",
-            fontFamily: "inherit",
           }}
         >
           ייצוא PDF
@@ -293,14 +299,9 @@ function ToolButton({
       type="button"
       onClick={onClick}
       style={{
-        padding: "6px 12px",
+        ...controlStyles.button,
         background: active ? "#0f172a" : "#f1f5f9",
         color: active ? "#fff" : "#0f172a",
-        border: "none",
-        borderRadius: 4,
-        fontFamily: "inherit",
-        fontSize: 13,
-        cursor: "pointer",
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
@@ -335,13 +336,9 @@ function UnitButton({ active, onClick, children }: { active: boolean; onClick: (
       type="button"
       onClick={onClick}
       style={{
-        padding: "4px 10px",
+        ...controlStyles.segmentedButton,
         background: active ? "#0f172a" : "#fff",
         color: active ? "#fff" : "#0f172a",
-        border: "none",
-        fontFamily: "inherit",
-        fontSize: 12,
-        cursor: "pointer",
       }}
     >
       {children}
@@ -349,24 +346,38 @@ function UnitButton({ active, onClick, children }: { active: boolean; onClick: (
   );
 }
 
+const hintStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: "#64748b",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+/**
+ * Notices are the other thing in this row that may shrink. They must: engine
+ * diagnostics and the dropped-manual-placement message are full sentences that
+ * name every affected wall, so pinning them at their intrinsic width would push
+ * the row back into overflow — the very bug this row's sizing exists to avoid.
+ * The full text stays reachable through `title`.
+ */
+const noticeStyle: React.CSSProperties = {
+  fontSize: 12,
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
 const secondaryButton: React.CSSProperties = {
-  padding: "6px 12px",
+  ...controlStyles.secondaryButton,
   background: "#eff6ff",
   color: "#1e40af",
   border: "1px solid #bfdbfe",
-  borderRadius: 4,
-  fontFamily: "inherit",
-  fontSize: 13,
-  cursor: "pointer",
 };
 
 const projectsButton: React.CSSProperties = {
-  padding: "6px 12px",
+  ...controlStyles.secondaryButton,
   background: "#f8fafc",
-  color: "#0f172a",
-  border: "1px solid #cbd5e1",
-  borderRadius: 4,
-  fontFamily: "inherit",
-  fontSize: 13,
-  cursor: "pointer",
 };

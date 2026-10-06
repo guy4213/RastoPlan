@@ -12,6 +12,7 @@ import {
 } from "../../canvas/geometry.js";
 import { resolvedWallFrame, type ResolvedWallFrame } from "../../canvas/resolvedWallFrame.js";
 import { placementLabel } from "../../canvas/placementLabel.js";
+import { layoutLabels, type LabelCandidate } from "../../canvas/labelLayout.js";
 import { rtlTextAnchor, uprightRotationDeg } from "./svgTextGeometry.js";
 
 /**
@@ -33,6 +34,14 @@ const TITLE_BLOCK_MM = 30;
 const BOUNDS_PADDING_CM = 60;
 /** How far outside the wall a length label sits, as a fixed distance on paper (mm) — independent of the chosen scale, like the canvas keeps it independent of zoom. */
 const LABEL_OFFSET_MM = 6;
+/** Print-sheet font size (mm) for a wall-length dimension. Named so the same
+ * number feeds both the collision-avoidance box estimate and the rendered
+ * <text>, rather than risking the two silently drifting apart. */
+const LENGTH_LABEL_FONT_SIZE_MM = 2.6;
+
+/** Shared by the panel <text> below and the obstacle box the label solver
+ * reserves for it, so the two cannot drift apart. */
+const PANEL_LABEL_FONT_SIZE_MM = 2.4;
 
 export interface PlanSvgProps {
   projectName: string;
@@ -171,6 +180,67 @@ export function PlanSvg({
   const dateText = formatDateDDMMYYYY(generatedAt ?? new Date().toISOString());
   const scaleText = `1:${printScale}`;
 
+  // Same collision-avoidance pass the Konva canvas runs (labelLayout.ts), so
+  // a plan whose inner and outer contour each draw their own length label —
+  // two different numbers close together, e.g. an inner ring's 506 next to
+  // the outer ring's 546 — separates on paper exactly like it does on
+  // screen, instead of duplicating a second positioning pass here that could
+  // silently drift from the canvas one.
+  const lengthLabelFontSizeCm = LENGTH_LABEL_FONT_SIZE_MM / mmPerCm;
+  const dimensionCandidates: LabelCandidate[] = [];
+  for (const wall of walls) {
+    const [a, b] = wall.innerLine;
+    const lengthCm = Math.hypot(b.x - a.x, b.y - a.y);
+    const side = labelSides.get(wall.id) ?? 1;
+    const placed = wallLabelPlacement(wall, side, labelOffsetCm);
+    if (!placed) continue;
+    const n = wallNormal(wall);
+    dimensionCandidates.push({
+      id: `len:${wall.id}`,
+      anchor: { x: placed.x, y: placed.y },
+      rotationDeg: placed.rotationDeg,
+      text: formatLength(lengthCm, "cm"),
+      fontSizeCm: lengthLabelFontSizeCm,
+      pushDir: { x: n.x * side, y: n.y * side },
+      priority: lengthCm,
+    });
+  }
+  // The panel labels are obstacles, not candidates. At 1:50 the dimension
+  // offset works out to ~15 cm of world space, which lands INSIDE a 20 cm
+  // wall — so without these the solver had nothing to avoid and a length
+  // label printed straight over `עץ 351` and over panel `40`. On screen the
+  // same labels clear the band because the canvas offset is in screen pixels,
+  // which is why this only ever showed up on paper.
+  const panelLabelFontSizeCm = PANEL_LABEL_FONT_SIZE_MM / mmPerCm;
+  for (const placement of placements) {
+    const wall = wallById.get(placement.wallId);
+    if (!wall) continue;
+    const frame = frameByWallId.get(wall.id);
+    if (!frame) continue;
+    const corners = placementBandCorners(
+      paintedById.get(placement.id) ?? placement,
+      wall,
+      frame,
+      PLACEMENT_BAND_DEPTH_CM
+    );
+    const dir = wallDirection(wall);
+    dimensionCandidates.push({
+      id: `panel:${placement.id}`,
+      anchor: {
+        x: corners.reduce((sum, c) => sum + c.x, 0) / corners.length,
+        y: corners.reduce((sum, c) => sum + c.y, 0) / corners.length,
+      },
+      rotationDeg: uprightRotationDeg((Math.atan2(dir.y, dir.x) * 180) / Math.PI),
+      text: placementLabel(placement),
+      fontSizeCm: panelLabelFontSizeCm,
+      pushDir: { x: 1, y: 0 },
+      priority: 0,
+      fixed: true,
+    });
+  }
+
+  const dimensionPlacements = layoutLabels(dimensionCandidates);
+
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -253,7 +323,7 @@ export function PlanSvg({
               <text
                 x={center.x}
                 y={center.y}
-                fontSize={2.4}
+                fontSize={PANEL_LABEL_FONT_SIZE_MM}
                 fill="#0f172a"
                 textAnchor={rtlTextAnchor("center")}
                 dominantBaseline="middle"
@@ -273,24 +343,25 @@ export function PlanSvg({
         {walls.map((wall) => {
           const [a, b] = wall.innerLine;
           const lengthCm = Math.hypot(b.x - a.x, b.y - a.y);
-          const side = labelSides.get(wall.id) ?? 1;
-          const placed = wallLabelPlacement(wall, side, labelOffsetCm);
-          if (!placed) return null;
-          const p = toMm({ x: placed.x, y: placed.y });
+          const solved = dimensionPlacements.get(`len:${wall.id}`);
+          if (!solved) return null;
+          const p = toMm({ x: solved.x, y: solved.y });
           const text = formatLength(lengthCm, "cm");
           // wallLabelPlacement already tries to avoid upside-down text, but
           // it has an exact -90° boundary gap (a wall drawn precisely
           // bottom-to-top keeps rotationDeg at -90 instead of folding to 90)
           // — printed on paper that reads flipped, so the print layer folds
           // independently rather than depending on that upstream case.
-          const rotationDeg = uprightRotationDeg(placed.rotationDeg);
+          // layoutLabels never changes rotationDeg (it only moves x/y), so
+          // folding the SOLVED rotation is equivalent to folding the raw one.
+          const rotationDeg = uprightRotationDeg(solved.rotationDeg);
 
           return (
             <text
               key={`dim:${wall.id}`}
               x={p.x}
               y={p.y}
-              fontSize={2.6}
+              fontSize={LENGTH_LABEL_FONT_SIZE_MM}
               fill="#334155"
               textAnchor={rtlTextAnchor("center")}
               dominantBaseline="middle"

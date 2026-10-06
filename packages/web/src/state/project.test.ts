@@ -8,7 +8,13 @@ import {
   perpendicularDistance,
 } from "@rastoplan/core";
 import type { Action, AppState } from "./project.js";
-import { initialAppState, initialProject, manualPlacementWalls, reduce } from "./project.js";
+import {
+  HISTORY_LIMIT,
+  initialAppState,
+  initialProject,
+  manualPlacementWalls,
+  reduce,
+} from "./project.js";
 
 /** The 400x300 room traced as two contours `t` apart, as the user would draw it. */
 function twoContourRoom(t: number, pourId = "pour-1"): Wall[] {
@@ -735,38 +741,45 @@ describe("thickness is available before any compute", () => {
   });
 });
 
-describe("ortho lock is a mode, not a held key", () => {
-  it("starts off, so a fresh session draws at any angle as it always did", () => {
-    expect(stateWith([]).ui.orthoLock).toBe(false);
+describe("ortho lock is a sticky baseline that Shift inverts while held", () => {
+  // Rule change, 29/9/2026: the baseline now starts ON. Nearly every wall in
+  // this domain is orthogonal, so the free-angle wall is the one that should
+  // cost a modifier. The reason the baseline is a mode rather than the held
+  // key itself is unchanged — a run of walls must keep one setting instead of
+  // depending on the user never letting go mid-run. The held part lives in
+  // canvas/shiftHeld.ts and composes via effectiveOrthoLock; the reducer only
+  // owns the baseline.
+  it("starts on, so drawing is straight without touching anything", () => {
+    expect(stateWith([]).ui.orthoLock).toBe(true);
   });
 
-  it("flips on and back off", () => {
-    const on = run(stateWith([]), { type: "set-ortho-lock", value: true });
-    expect(on.ui.orthoLock).toBe(true);
-
-    const off = run(on, { type: "set-ortho-lock", value: false });
+  it("flips off and back on", () => {
+    const off = run(stateWith([]), { type: "set-ortho-lock", value: false });
     expect(off.ui.orthoLock).toBe(false);
+
+    const on = run(off, { type: "set-ortho-lock", value: true });
+    expect(on.ui.orthoLock).toBe(true);
   });
 
   it("survives switching tools, so a run of walls keeps one setting", () => {
     const after = run(
       stateWith([]),
-      { type: "set-ortho-lock", value: true },
+      { type: "set-ortho-lock", value: false },
       { type: "set-tool", tool: "select" },
       { type: "set-tool", tool: "draw-wall" }
     );
 
-    expect(after.ui.orthoLock).toBe(true);
+    expect(after.ui.orthoLock).toBe(false);
   });
 
   it("is untouched by panning the viewport", () => {
     const after = run(
       stateWith([]),
-      { type: "set-ortho-lock", value: true },
+      { type: "set-ortho-lock", value: false },
       { type: "set-view", view: { scale: 0.5, offset: { x: 40, y: 90 } } }
     );
 
-    expect(after.ui.orthoLock).toBe(true);
+    expect(after.ui.orthoLock).toBe(false);
   });
 });
 
@@ -1195,5 +1208,156 @@ describe("timber-gap range narrowed to 1–5cm on load (13/9/2026 customer decis
   it("says nothing once a project is already at the current schema", () => {
     const saved = projectWith(twoContourRoom(20));
     expect(initialAppState(saved).ui.notice).toBeNull();
+  });
+});
+
+describe("undo and redo", () => {
+  it("takes back a drawn wall and puts it back again", () => {
+    const drawn = run(stateWith([]), {
+      type: "add-wall",
+      a: { x: 0, y: 0 },
+      b: { x: 400, y: 0 },
+    });
+    expect(drawn.project.walls).toHaveLength(1);
+
+    const undone = run(drawn, { type: "undo" });
+    expect(undone.project.walls).toHaveLength(0);
+
+    const redone = run(undone, { type: "redo" });
+    expect(redone.project.walls).toHaveLength(1);
+    expect(redone.project.walls[0]!.innerLine).toEqual([
+      { x: 0, y: 0 },
+      { x: 400, y: 0 },
+    ]);
+  });
+
+  it("does nothing at either end of the stack", () => {
+    const fresh = stateWith([]);
+    expect(run(fresh, { type: "undo" })).toBe(fresh);
+    expect(run(fresh, { type: "redo" })).toBe(fresh);
+  });
+
+  it("restores the layout and its dirty flag together", () => {
+    // layoutDirty lives in ui, not project. Restoring the project alone would
+    // leave the "layout is stale" banner describing the undone edit.
+    const computed = run(stateWith(twoContourRoom(20)), { type: "compute" });
+    expect(computed.ui.layoutDirty).toBe(false);
+    expect(computed.project.layout).toBeDefined();
+
+    const edited = run(computed, {
+      type: "add-wall",
+      a: { x: 1000, y: 1000 },
+      b: { x: 1400, y: 1000 },
+    });
+    expect(edited.ui.layoutDirty).toBe(true);
+
+    const undone = run(edited, { type: "undo" });
+    expect(undone.project.layout).toBeDefined();
+    expect(undone.project.placements).toEqual(computed.project.placements);
+    expect(undone.ui.layoutDirty).toBe(false);
+  });
+
+  it("brings back what a delete destroyed beyond the wall itself", () => {
+    // Deleting one half of a pair also unpairs the survivor and resets its
+    // thickness to the default — none of which has an inverse action.
+    const paired = run(stateWith(twoContourRoom(20)), { type: "compute" });
+    const before = wallIn(paired, "in-bottom");
+    expect(before.pairedWallId).toBe("out-bottom");
+
+    const deleted = run(paired, { type: "delete-wall", wallId: "out-bottom" });
+    expect(wallIn(deleted, "in-bottom").pairedWallId).toBeUndefined();
+
+    const undone = run(deleted, { type: "undo" });
+    expect(wallIn(undone, "in-bottom").pairedWallId).toBe("out-bottom");
+    expect(wallIn(undone, "in-bottom").thickness).toBe(before.thickness);
+  });
+
+  it("treats a burst of keystrokes in one field as a single step", () => {
+    // The project-name input dispatches on every character; without
+    // coalescing, one Ctrl+Z would take back one letter.
+    const typed = run(
+      stateWith([]),
+      { type: "rename-project", name: "ב" },
+      { type: "rename-project", name: "בי" },
+      { type: "rename-project", name: "בית" }
+    );
+    expect(typed.project.name).toBe("בית");
+    expect(typed.past).toHaveLength(1);
+
+    expect(run(typed, { type: "undo" }).project.name).toBe("test");
+  });
+
+  it("starts a new step once the user moves on", () => {
+    const typed = run(
+      stateWith(twoContourRoom(20)),
+      { type: "rename-project", name: "בית" },
+      { type: "select-wall", wallId: "in-bottom" },
+      { type: "rename-project", name: "בית א" }
+    );
+
+    expect(run(typed, { type: "undo" }).project.name).toBe("בית");
+  });
+
+  it("coalesces thickness typed on the canvas, per wall", () => {
+    const typed = run(
+      stateWith(twoContourRoom(20)),
+      { type: "update-wall", wallId: "in-bottom", patch: { thickness: 2 } },
+      { type: "update-wall", wallId: "in-bottom", patch: { thickness: 25 } }
+    );
+    expect(typed.past).toHaveLength(1);
+    expect(run(typed, { type: "undo" }).project.walls).toEqual(
+      stateWith(twoContourRoom(20)).project.walls
+    );
+  });
+
+  it("drops the redo stack as soon as a new edit lands", () => {
+    const undone = run(
+      stateWith([]),
+      { type: "add-wall", a: { x: 0, y: 0 }, b: { x: 400, y: 0 } },
+      { type: "undo" }
+    );
+    expect(undone.future).toHaveLength(1);
+
+    const branched = run(undone, {
+      type: "add-wall",
+      a: { x: 0, y: 0 },
+      b: { x: 0, y: 300 },
+    });
+    expect(branched.future).toHaveLength(0);
+  });
+
+  it("is not moved by selecting, panning, or switching tools", () => {
+    const after = run(
+      stateWith(twoContourRoom(20)),
+      { type: "set-tool", tool: "draw-wall" },
+      { type: "select-wall", wallId: "in-bottom" },
+      { type: "set-view", view: { scale: 2, offset: { x: 0, y: 0 } } },
+      { type: "set-ortho-lock", value: false }
+    );
+
+    expect(after.past).toHaveLength(0);
+  });
+
+  it("is cleared by opening another project, which re-runs migrations", () => {
+    const drawn = run(stateWith([]), {
+      type: "add-wall",
+      a: { x: 0, y: 0 },
+      b: { x: 400, y: 0 },
+    });
+    expect(drawn.past).toHaveLength(1);
+
+    const loaded = run(drawn, { type: "load-project", project: projectWith([]) });
+    expect(loaded.past).toHaveLength(0);
+    expect(loaded.future).toHaveLength(0);
+  });
+
+  it("keeps only the most recent HISTORY_LIMIT steps", () => {
+    let state = stateWith([]);
+    for (let i = 0; i < HISTORY_LIMIT + 5; i++) {
+      state = run(state, { type: "rename-project", name: `name ${i}` });
+      // Break the coalescing group so each rename is its own step.
+      state = run(state, { type: "set-tool", tool: i % 2 === 0 ? "select" : "draw-wall" });
+    }
+    expect(state.past).toHaveLength(HISTORY_LIMIT);
   });
 });

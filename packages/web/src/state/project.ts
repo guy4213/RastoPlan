@@ -46,17 +46,42 @@ export interface UiState {
   /** Why the last edit was refused or adjusted; null when there is nothing to say. */
   notice: string | null;
   /**
-   * Lock new wall lines to horizontal/vertical. A sticky mode rather than a
-   * held modifier: drawing a run of orthogonal walls meant holding Shift for
-   * the whole run, and letting go between segments silently produced a wall a
-   * degree off. Affects drawing only — selection, pan and form fields ignore it.
+   * Baseline lock for new wall lines: horizontal/vertical. On by default —
+   * nearly every wall in this domain is orthogonal, so the free-angle wall is
+   * the one that should cost a modifier. Holding Shift inverts this for as
+   * long as it is held (see `effectiveOrthoLock` in canvas/geometry.ts); the
+   * baseline stays a sticky mode so a run of walls keeps one setting instead
+   * of depending on the user never letting go mid-run. Affects drawing only —
+   * selection, pan and form fields ignore it.
    */
   orthoLock: boolean;
 }
 
+/**
+ * One undoable step. The project alone is not enough: `layoutDirty` lives in
+ * `ui`, so restoring only the project would leave the "layout is stale" banner
+ * describing the edit that was just undone.
+ *
+ * `coalesceKey` groups dispatches that are really one user edit. The project
+ * name input and the on-canvas thickness editor both dispatch on every
+ * keystroke, so without this one Ctrl+Z would undo a single character.
+ */
+export interface HistoryEntry {
+  project: Project;
+  layoutDirty: boolean;
+  coalesceKey: string | null;
+}
+
+/** Undo depth. A Project carries its whole computed layout, so this is not free. */
+export const HISTORY_LIMIT = 30;
+
 export interface AppState {
   project: Project;
   ui: UiState;
+  /** Most recent state last. */
+  past: HistoryEntry[];
+  /** Most recently undone last. Cleared by any new edit. */
+  future: HistoryEntry[];
 }
 
 const PALETTE = ["#dc2626", "#2563eb", "#059669", "#d97706", "#7c3aed", "#0891b2"];
@@ -129,10 +154,10 @@ export function initialAppState(project: Project): AppState {
       layoutDirty: isLayoutMissing(opened.project),
       units: "cm",
       notice: opened.notice,
-      // Off by default, so a fresh session draws exactly as it did before the
-      // toggle existed — free angle unless the user asks for the lock.
-      orthoLock: false,
+      orthoLock: true,
     },
+    past: [],
+    future: [],
   };
 }
 
@@ -186,7 +211,9 @@ export type Action =
       field: keyof QuantityOverrides;
       pourId: string;
       value: number | null;
-    };
+    }
+  | { type: "undo" }
+  | { type: "redo" };
 
 function withUpdatedAt(project: Project): Project {
   return { ...project, updatedAt: nowIso() };
@@ -482,7 +509,114 @@ function findSyncTwin(target: Placement, all: Placement[]): Placement | undefine
   );
 }
 
+/**
+ * Undo is snapshot-based, not inverse-action based, and deliberately so.
+ * `compute` runs the whole engine inside the reducer, and `withLayoutInvalidated`,
+ * `delete-wall` and `delete-pour` each perform destructive transformations with
+ * no natural inverse (dropped manual placements, a partner's thickness reset to
+ * the default, walls reassigned to a fallback pour). A snapshot restores all of
+ * it for free. Replaying actions instead is not an option: `uid()` and
+ * `nowIso()` make the reducer's output non-deterministic.
+ */
 export function reduce(state: AppState, action: Action): AppState {
+  if (action.type === "undo" || action.type === "redo") return travel(state, action.type);
+  return recordHistory(state, reduceCore(state, action), action);
+}
+
+/**
+ * Pushes the pre-edit project onto `past` whenever an action actually changed
+ * it. UI-only actions are invisible to undo, but the ones that mean "the user
+ * moved on" close the current coalescing group.
+ */
+function recordHistory(before: AppState, after: AppState, action: Action): AppState {
+  if (action.type === "new-project" || action.type === "load-project") {
+    // Both re-run openProject (migration, junction splitting, thickness
+    // healing), so a snapshot taken before the load describes a different
+    // document. Undoing across that boundary would be a lie.
+    return { ...after, past: [], future: [] };
+  }
+
+  if (after.project === before.project) {
+    return ENDS_COALESCE_GROUP.has(action.type) ? closeCoalesceGroup(after) : after;
+  }
+
+  const key = coalesceKeyFor(action);
+  const previous = before.past[before.past.length - 1];
+  const past =
+    key !== null && previous && previous.coalesceKey === key
+      ? // Same edit still in progress — keep the older snapshot, which is the
+        // state the user actually wants back, and just carry the key forward.
+        before.past
+      : [
+          ...before.past,
+          { project: before.project, layoutDirty: before.ui.layoutDirty, coalesceKey: key },
+        ].slice(-HISTORY_LIMIT);
+
+  return { ...after, past, future: [] };
+}
+
+/** Actions after which a further keystroke-level edit starts a new undo step. */
+const ENDS_COALESCE_GROUP = new Set<Action["type"]>([
+  "select-wall",
+  "set-selected-walls",
+  "select-placement",
+  "set-tool",
+]);
+
+function closeCoalesceGroup(state: AppState): AppState {
+  const last = state.past[state.past.length - 1];
+  if (!last || last.coalesceKey === null) return state;
+  return {
+    ...state,
+    past: [...state.past.slice(0, -1), { ...last, coalesceKey: null }],
+  };
+}
+
+/**
+ * Non-null for the two paths that dispatch on every keystroke: the project
+ * name input (Toolbar) and the thickness editor drawn on the canvas (Walls).
+ * Everything else is already one dispatch per completed edit.
+ */
+function coalesceKeyFor(action: Action): string | null {
+  if (action.type === "rename-project") return "rename-project";
+  if (action.type === "update-wall" && action.patch.thickness !== undefined) {
+    return `thickness:${action.wallId}`;
+  }
+  return null;
+}
+
+function travel(state: AppState, direction: "undo" | "redo"): AppState {
+  const from = direction === "undo" ? state.past : state.future;
+  const entry = from[from.length - 1];
+  if (!entry) return state;
+
+  const current: HistoryEntry = {
+    project: state.project,
+    layoutDirty: state.ui.layoutDirty,
+    coalesceKey: null,
+  };
+  const remaining = from.slice(0, -1);
+  const opposite = [...(direction === "undo" ? state.future : state.past), current].slice(
+    -HISTORY_LIMIT
+  );
+
+  return {
+    project: entry.project,
+    ui: {
+      ...state.ui,
+      layoutDirty: entry.layoutDirty,
+      // A restored project may not contain what is selected any more.
+      selectedWallId: null,
+      selectedWallIds: [],
+      selectedPlacementId: null,
+      notice: null,
+    },
+    past: direction === "undo" ? remaining : opposite,
+    future: direction === "undo" ? opposite : remaining,
+  };
+}
+
+function reduceCore(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "new-project":
       // New projects reset the editing session; opening an existing project
@@ -492,6 +626,7 @@ export function reduce(state: AppState, action: Action): AppState {
     case "load-project": {
       const opened = openProject(action.project);
       return {
+        ...state,
         project: opened.project,
         ui: {
           ...state.ui,

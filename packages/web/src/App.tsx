@@ -30,7 +30,7 @@ export function App() {
           background: "#fff",
         }}
       >
-        <div style={{ gridArea: "toolbar" }}>
+        <div style={{ gridArea: "toolbar", minWidth: 0 }}>
           <Toolbar />
         </div>
         <aside

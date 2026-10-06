@@ -4,13 +4,16 @@ import type Konva from "konva";
 import type { Point, Pour, ProjectLayout, Wall } from "@rastoplan/core";
 import { retargetWallThickness } from "@rastoplan/core";
 import { useProject } from "../state/ProjectContext.js";
-import { ENDPOINT_SNAP_PIXELS, applyAxisLock, findEndpointSnapTarget, formatLength, labelSideByWallId, snapEndpoint, thicknessFromPointer, wallLabelPlacement, wallNormal } from "./geometry.js";
+import { useShiftHeld } from "./shiftHeld.js";
+import { ENDPOINT_SNAP_PIXELS, applyAxisLock, effectiveOrthoLock, findEndpointSnapTarget, formatLength, labelSideByWallId, snapEndpoint, thicknessFromPointer, wallLabelPlacement, wallNormal } from "./geometry.js";
 import { MAX_WALL_THICKNESS_CM, MIN_WALL_THICKNESS_CM } from "../state/project.js";
+import { layoutLabels, type LabelCandidate, type PlacedLabel } from "./labelLayout.js";
 
 import {
   resolvedWallFrame,
   thicknessDimensionGroupKey,
   thicknessDimensionMode,
+  type ThicknessDimensionMode,
 } from "./resolvedWallFrame.js";
 
 interface Props {
@@ -31,10 +34,36 @@ const THICKNESS_DRAG_STEP_CM = 0.5;
 /** How far off its wall a length label sits, in screen pixels at any zoom. */
 const LABEL_OFFSET_PIXELS = 20;
 
+/**
+ * How far beyond the thickness dimension's far tick the VALUE text sits, in
+ * screen pixels at any zoom.
+ *
+ * It used to sit at thickness/2 — the MIDPOINT of the dimension line — which
+ * is exactly where it collided with the wall-length label: on a 20cm wall at
+ * scale ~= 2, thickness/2 (10cm) and the length label's 20px/scale offset
+ * (also 10cm) landed on the same point at incompatible rotations. Anchoring
+ * the text beyond the far tick instead of on the line's midpoint is standard
+ * drafting practice for a dimension too short to hold its value inline, and
+ * it means the common case needs no collision solving at all — the solver
+ * below only has to catch what this deterministic separation does not.
+ */
+const THICKNESS_LABEL_MARGIN_PIXELS = 14;
+
+/**
+ * Priority offset so every wall-length label is placed (and so kept at its
+ * own anchor) before any thickness label competes for space, regardless of
+ * either wall's length — matching layoutLabels' "ties broken by priority,
+ * then id" contract. No wall will ever be 1,000,000 cm long.
+ */
+const LENGTH_LABEL_PRIORITY_BASE = 1_000_000;
+
 export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, scale, onSelect, onContextMenu }: Props) {
   const { state, dispatch } = useProject();
   const draggable = state.ui.tool === "select";
-  const orthoLock = state.ui.orthoLock;
+  // The effective lock, not the stored baseline: dragging an endpoint has to
+  // obey Shift exactly like drawing a new wall does, or the same key would
+  // mean two different things on the same canvas.
+  const orthoLock = effectiveOrthoLock(state.ui.orthoLock, useShiftHeld());
 
   // Thickness being dragged, in cm. Local rather than dispatched per pointer
   // move: a dispatch would re-run the whole pairing pass on every pixel. The
@@ -109,6 +138,13 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
     const onPointerDown = () => finish();
     const onKeyDown = (event: KeyboardEvent) => {
       const edit = thicknessTextEdit;
+
+      // Ctrl/Cmd combos (undo, redo, ...) are not part of this tiny numeric
+      // editor's vocabulary. Letting them fall through unswallowed is what
+      // lets Canvas.tsx's global Ctrl+Z/Ctrl+Y handler see a keypress made
+      // while the thickness editor happens to be open, instead of it being
+      // silently eaten by stopImmediatePropagation below.
+      if (event.ctrlKey || event.metaKey) return;
 
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
@@ -230,6 +266,87 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
       thicknessOwnerByGap.set(key, { wallId: wall.id, interactive });
     }
   }
+
+  // One collision-avoidance pass for every label on the plan: wall-length
+  // labels AND thickness labels, canvas-wide. Built from the exact same
+  // frame/thicknessMode/thicknessOwnerByGap the render below uses, so this
+  // never disagrees with what actually gets drawn — it only decides where,
+  // once two labels would otherwise land on top of each other.
+  const labelPlacements = useMemo<Map<string, PlacedLabel>>(() => {
+    const candidates: LabelCandidate[] = [];
+
+    for (const wall of shownWalls) {
+      const [a, b] = wall.innerLine;
+      const lengthCm = Math.hypot(b.x - a.x, b.y - a.y);
+      const n = wallNormal(wall);
+
+      if (lengthCm >= minCmForLabel) {
+        const side = labelSides.get(wall.id) ?? 1;
+        const placement = wallLabelPlacement(wall, side, LABEL_OFFSET_PIXELS / scale);
+        if (placement) {
+          candidates.push({
+            id: `len:${wall.id}`,
+            anchor: { x: placement.x, y: placement.y },
+            rotationDeg: placement.rotationDeg,
+            text: formatLength(lengthCm, units),
+            fontSizeCm: 12 / scale,
+            pushDir: { x: n.x * side, y: n.y * side },
+            priority: LENGTH_LABEL_PRIORITY_BASE + lengthCm,
+          });
+        }
+      }
+
+      const frame = frameForWall(wall);
+      const requestedThicknessMode = thicknessDimensionMode(frame, wall.id === selectedWallId, draggable);
+      const thicknessKey = thicknessDimensionGroupKey(wall, frame);
+      const thicknessMode: ThicknessDimensionMode =
+        thicknessOwnerByGap.get(thicknessKey)?.wallId === wall.id ? requestedThicknessMode : "hidden";
+      if (thicknessMode === "hidden") continue;
+
+      const push = frame.faceBOffsetCm * frame.outwardSign;
+      const dirSign: 1 | -1 = push >= 0 ? 1 : -1;
+      const from = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const to = { x: from.x + n.x * push, y: from.y + n.y * push };
+      const tick = { x: -n.y, y: n.x };
+      const tickCm = 5 / scale;
+      const marginCm = THICKNESS_LABEL_MARGIN_PIXELS / scale;
+      const thickness = Math.abs(push);
+      const label = Number.isInteger(thickness) ? String(thickness) : thickness.toFixed(1);
+      const labelText = `${label} ס"מ`;
+      const editingDraft = thicknessTextEdit?.wallId === wall.id ? thicknessTextEdit.draft : null;
+      const shownLabelText = `${editingDraft ?? label}${labelText.slice(label.length)}`;
+
+      candidates.push({
+        id: `thk:${wall.id}`,
+        anchor: {
+          x: to.x + n.x * dirSign * marginCm + tick.x * tickCm,
+          y: to.y + n.y * dirSign * marginCm + tick.y * tickCm,
+        },
+        rotationDeg: 0,
+        text: shownLabelText,
+        fontSizeCm: 10 / scale,
+        pushDir: { x: n.x * dirSign, y: n.y * dirSign },
+        priority: lengthCm,
+      });
+    }
+
+    return layoutLabels(candidates);
+    // frameForWall and thicknessOwnerByGap are freshly built every render from
+    // shownWalls/layout/thicknessDrag/selectedWallId/draggable — listed
+    // directly rather than the two derived objects so this memo does not miss
+    // a recompute because a new-but-equal Map/function reference was made.
+  }, [
+    shownWalls,
+    layout,
+    thicknessDrag,
+    minCmForLabel,
+    labelSides,
+    scale,
+    units,
+    selectedWallId,
+    draggable,
+    thicknessTextEdit,
+  ]);
 
   return (
     <>
@@ -367,11 +484,10 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
             )}
             <WallLengthLabel
               wall={wall}
-              outwardSign={labelSides.get(wall.id) ?? 1}
+              labelPos={labelPlacements.get(`len:${wall.id}`) ?? null}
               scale={scale}
               units={units}
               highlight={selected}
-              hidden={Math.hypot(b.x - a.x, b.y - a.y) < minCmForLabel}
               onEdit={() => onEditLength(wall)}
             />
             {/* One static thickness per physical wall stays visible. Only the
@@ -390,6 +506,7 @@ export function Walls({ walls, pours, layout, selectedWallId, selectedWallIds, s
                 editingDraft={
                   thicknessTextEdit?.wallId === wall.id ? thicknessTextEdit.draft : null
                 }
+                labelPos={labelPlacements.get(`thk:${wall.id}`) ?? null}
                 onEdit={() => {
                   onSelect(wall.id);
                   const value = Math.round(frame.thickness * 10) / 10;
@@ -452,6 +569,7 @@ function ThicknessDimension({
   highlight,
   draggable,
   editingDraft,
+  labelPos,
   onEdit,
   onDrag,
   onDragEnd,
@@ -464,6 +582,12 @@ function ThicknessDimension({
   highlight: boolean;
   draggable: boolean;
   editingDraft: string | null;
+  /** Where the VALUE text goes, from the collision-avoidance pass in Walls —
+   * everything else here (the leader line, the tick marks, the grip) stays
+   * anchored to the real geometry (`from`/`to`); only the text moves. Falls
+   * back to the old thickness/2 midpoint if a caller ever renders this
+   * without running that pass. */
+  labelPos: Point | null;
   onEdit: () => void;
   onDrag: (pointer: Point) => void;
   onDragEnd: (pointer: Point) => void;
@@ -516,8 +640,8 @@ function ThicknessDimension({
   const label = Number.isInteger(thickness) ? String(thickness) : thickness.toFixed(1);
   const labelText = `${label} ס"מ`;
   const shownLabelText = `${editingDraft ?? label}${labelText.slice(label.length)}`;
-  const labelX = (from.x + to.x) / 2 + tick.x * tickCm;
-  const labelY = (from.y + to.y) / 2 + tick.y * tickCm;
+  const labelX = labelPos?.x ?? (from.x + to.x) / 2 + tick.x * tickCm;
+  const labelY = labelPos?.y ?? (from.y + to.y) / 2 + tick.y * tickCm;
   const editWidth = Math.max(42, shownLabelText.length * 5.6) / scale;
   const editHeight = 18 / scale;
 
@@ -591,46 +715,42 @@ function ThicknessDimension({
  * Length text centred on the wall, pushed onto the OUTSIDE by the resolved
  * outward direction so it lands in free space instead of inside the room.
  * Rotated to match the wall's angle so long labels stay readable.
+ *
+ * Position comes from Walls' collision-avoidance pass (labelPos), not from
+ * wallLabelPlacement directly: null means either the wall was too short for
+ * a label (hidden) or the run never built a candidate for it — either way,
+ * nothing to draw.
  */
 function WallLengthLabel({
   wall,
-  outwardSign,
+  labelPos,
   scale,
   units,
   highlight,
-  hidden,
   onEdit,
 }: {
   wall: Wall;
-  outwardSign: 1 | -1;
+  labelPos: { x: number; y: number; rotationDeg: number } | null;
   scale: number;
   units: "cm" | "m";
   highlight: boolean;
-  hidden: boolean;
   onEdit: () => void;
 }) {
-  if (hidden) return null;
+  if (!labelPos) return null;
   const [a, b] = wall.innerLine;
   const lengthCm = Math.hypot(b.x - a.x, b.y - a.y);
-  // A fixed distance on screen, and deliberately nothing to do with the wall's
-  // thickness. It used to clear the thickness first, which reads fine on a 20cm
-  // wall and falls apart on anything else: where the engine resolved two traced
-  // rings as one 95cm wall, every label was flung 100cm out, over the next ring
-  // and on top of its labels. They had not disappeared — they were stacked.
-  const placement = wallLabelPlacement(wall, outwardSign, LABEL_OFFSET_PIXELS / scale);
-  if (!placement) return null;
 
   const text = formatLength(lengthCm, units);
   const fontSize = 12 / scale;
   return (
     <Text
-      x={placement.x}
-      y={placement.y}
+      x={labelPos.x}
+      y={labelPos.y}
       text={text}
       fontSize={fontSize}
       fill={highlight ? "#0f172a" : "#334155"}
       fontStyle={highlight ? "bold" : "normal"}
-      rotation={placement.rotationDeg}
+      rotation={labelPos.rotationDeg}
       offsetX={(text.length * fontSize * 0.28)}
       offsetY={fontSize / 2}
       // Clicking the dimension is how you set an exact length — dragging an

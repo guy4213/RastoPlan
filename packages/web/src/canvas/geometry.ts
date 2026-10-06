@@ -5,9 +5,13 @@ import type { Placement, Point, ProjectLayout, Wall } from "@rastoplan/core";
  * strictly horizontal or vertical relative to `start` — the CAD "ortho" lock
  * users expect. Passthrough otherwise, which lets the user draw at any angle.
  *
- * The lock is a sticky mode (ui.orthoLock), not a held key: a run of orthogonal
- * walls used to mean holding Shift the whole way, and releasing it between
- * segments quietly produced one that was a degree off.
+ * `locked` is the EFFECTIVE lock, not `ui.orthoLock` on its own: the stored
+ * mode is the baseline (on by default) and holding Shift inverts it for as
+ * long as it is held — see `effectiveOrthoLock`. The baseline being a sticky
+ * mode is what keeps a run of orthogonal walls honest: when it meant holding
+ * Shift the whole way, releasing between segments quietly produced one that
+ * was a degree off. Defaulting the baseline to ON preserves that, and makes
+ * the rare free-angle wall the thing that costs a modifier.
  */
 export function applyAxisLock(start: Point, end: Point, locked: boolean): Point {
   if (!locked) return end;
@@ -15,6 +19,16 @@ export function applyAxisLock(start: Point, end: Point, locked: boolean): Point 
   const dy = end.y - start.y;
   if (Math.abs(dx) >= Math.abs(dy)) return { x: end.x, y: start.y };
   return { x: start.x, y: end.y };
+}
+
+/**
+ * The axis lock actually in force. `baseline` is the persisted mode the
+ * toolbar toggles; Shift inverts it while held. Both statements the user
+ * made hold at once this way: drawing is straight without touching anything,
+ * and Shift always changes what the line is doing right now.
+ */
+export function effectiveOrthoLock(baseline: boolean, shiftHeld: boolean): boolean {
+  return baseline !== shiftHeld;
 }
 
 /** Length of a wall's inner line in cm. */
@@ -134,6 +148,90 @@ export function snapEndpoint(candidate: Point, walls: Wall[], endpointSnapCm: nu
  * size regardless of zoom — otherwise it's unreachable when zoomed out.
  */
 export const ENDPOINT_SNAP_PIXELS = 16;
+
+/**
+ * Screen-pixel tolerance for matching the length of a parallel wall.
+ * Converted to cm at the call site like ENDPOINT_SNAP_PIXELS, so the
+ * feel is the same at every zoom.
+ */
+export const PARALLEL_LENGTH_SNAP_PIXELS = 15;
+
+/** How far off parallel a wall may be and still count as a length reference. */
+const PARALLEL_TOLERANCE_DEG = 2;
+const PARALLEL_SIN_TOLERANCE = Math.sin((PARALLEL_TOLERANCE_DEG * Math.PI) / 180);
+
+export interface ParallelLengthSnap {
+  /** the adjusted endpoint: same direction, the reference wall's length */
+  end: Point;
+  /** which wall supplied the length — for the on-canvas hint */
+  wallId: string;
+  lengthCm: number;
+}
+
+/**
+ * Closing a rectangle by eye leaves the bottom edge a few centimetres off the
+ * top one, and the error only shows up later as a wall that won't pair. When
+ * the edge being drawn is parallel to one already on the plan and is within
+ * `toleranceCm` of its length, adopt that length exactly.
+ *
+ * Only the magnitude changes; the direction is left alone. That is why this
+ * must run AFTER `applyAxisLock` — locking the axis afterwards would move the
+ * endpoint off the matched length again.
+ *
+ * A soft snap, deliberately: keep dragging past the tolerance and the user's
+ * own length wins. `excludeWallId` keeps an endpoint drag from snapping the
+ * wall back to the length it had before the drag started.
+ */
+export function findParallelLengthSnap(
+  start: Point,
+  end: Point,
+  walls: Wall[],
+  toleranceCm: number,
+  excludeWallId?: string
+): ParallelLengthSnap | null {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return null;
+  const dir = { x: dx / length, y: dy / length };
+
+  let best: ParallelLengthSnap | null = null;
+  let bestDiff = Infinity;
+  for (const wall of walls) {
+    if (wall.id === excludeWallId) continue;
+    const referenceLength = wallLength(wall);
+    if (referenceLength === 0) continue;
+    const diff = Math.abs(referenceLength - length);
+    if (diff > toleranceCm) continue;
+
+    // |cross product| of two unit vectors is |sin(angle)| — the same near
+    // either 0° or 180°, so an edge drawn back the other way still matches.
+    const d = wallDirection(wall);
+    if (Math.abs(dir.x * d.y - dir.y * d.x) > PARALLEL_SIN_TOLERANCE) continue;
+
+    // Strict <: ties keep the earlier wall, so the result is deterministic.
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = {
+        end: { x: start.x + dir.x * referenceLength, y: start.y + dir.y * referenceLength },
+        wallId: wall.id,
+        lengthCm: referenceLength,
+      };
+    }
+  }
+  return best;
+}
+
+/** `findParallelLengthSnap`, reduced to the adjusted point. */
+export function snapToParallelLength(
+  start: Point,
+  end: Point,
+  walls: Wall[],
+  toleranceCm: number,
+  excludeWallId?: string
+): Point {
+  return findParallelLengthSnap(start, end, walls, toleranceCm, excludeWallId)?.end ?? end;
+}
 
 /**
  * Format an internal-cm length for display. Rounding is display-only —
